@@ -158,9 +158,10 @@ class APIHandler(BaseHTTPRequestHandler):
                 if ts < cutoff:
                     continue
 
-                # 输出标准 ISO（含秒、无 Z）。前端 fmtTime 会作为本地时间解析，
-                # 这样既能显示真实秒数，也避免把本地时间误当 UTC 造成时区偏移。
-                ts_label = ts.strftime("%Y-%m-%dT%H:%M:%S")
+                # 输出 UTC ISO（含秒、带 Z 后缀）。
+                # 与卡片端时间戳的语义保持一致（数据库里存的是服务器 UTC 时间），
+                # 前端 new Date(s) 会按 UTC 解析后自动转成浏览器本地时区显示。
+                ts_label = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
                 series["timestamps"].append(ts_label)
                 series["ttft_ms"].append(b.get("ttft_ms") or b.get("avg_ttft_ms"))
                 series["content_tps"].append(b.get("content_tps") or b.get("avg_content_tps"))
