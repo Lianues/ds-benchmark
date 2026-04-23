@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepSeek API 性能监控</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ── 默认（深色）主题 ── */
+:root {
+  --bg: #000000;
+  --card: #0a0a0a;
+  --card-hover: #111111;
+  --border: #222222;
+  --border-hover: #333333;
+  --text: #ededed;
+  --text-dim: #a1a1aa;
+  --text-muted: #71717a;
+  --accent: #ffffff;
+  --grid-line: rgba(255,255,255,0.06);
+  --grid-axis: #444444;
+  --tooltip-bg: #0a0a0a;
+  --chat-color: #60a5fa;
+  --reasoner-color: #fb923c;
+  --radius: 8px;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+}
+
+/* ── 浅色主题 (跟随系统) ── */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --card: #fafafa;
+    --card-hover: #f4f4f5;
+    --border: #e4e4e7;
+    --border-hover: #d4d4d8;
+    --text: #18181b;
+    --text-dim: #52525b;
+    --text-muted: #71717a;
+    --accent: #18181b;
+    --grid-line: rgba(0,0,0,0.06);
+    --grid-axis: #d4d4d8;
+    --tooltip-bg: #ffffff;
+  }
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: var(--font-sans); background: var(--bg); color: var(--text); min-height: 100vh; -webkit-font-smoothing: antialiased; letter-spacing: -0.01em; }
+
+.header { background: var(--bg); border-bottom: 1px solid var(--border); padding: 24px 32px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10; }
+.header h1 { font-size: 18px; font-weight: 500; letter-spacing: -0.02em; }
+.header h1 span { font-weight: 600; color: var(--accent); }
+.header-right { display: flex; align-items: center; gap: 24px; }
+.status-badge { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); font-weight: 500; }
+.status-badge.running { color: var(--text); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.status-badge.running .status-dot { animation: pulse 2s infinite; background: var(--accent); }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+.meta-info { font-size: 13px; color: var(--text-muted); display: flex; gap: 16px; }
+.meta-info span { color: var(--text-dim); font-family: var(--font-mono); font-size: 12px; }
+
+.github-link { color: var(--text-muted); display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); transition: all .2s; }
+.github-link:hover { color: var(--accent); border-color: var(--accent); }
+
+.refresh-control { display: flex; align-items: center; gap: 8px; }
+.refresh-countdown { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); min-width: 32px; text-align: right; }
+.refresh-btn { background: var(--card); color: var(--text-muted); border: 1px solid var(--border); border-radius: 8px; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: all .2s; }
+.refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+.refresh-btn.spinning svg { animation: spin .6s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+.container { max-width: 1440px; margin: 0 auto; padding: 32px; }
+
+.cards-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; min-width: 0; }
+.model-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; transition: all .2s ease; min-width: 0; }
+.model-card:hover { border-color: var(--border-hover); background: var(--card-hover); }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+.card-title { font-size: 15px; font-weight: 500; font-family: var(--font-mono); }
+.card-time { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+.metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.metric-box { display: flex; flex-direction: column; }
+.metric-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; font-weight: 500; }
+.metric-value { font-size: 24px; font-weight: 500; font-family: var(--font-mono); letter-spacing: -0.02em; color: var(--text); }
+.metric-unit { font-size: 13px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
+.metric-sub { font-size: 12px; color: var(--text-muted); margin-top: 6px; font-family: var(--font-mono); }
+
+.section-title { font-size: 15px; font-weight: 500; margin-bottom: 20px; color: var(--text); }
+
+.charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; min-width: 0; }
+.chart-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+.chart-card h3 { font-size: 13px; font-weight: 500; margin-bottom: 20px; color: var(--text-dim); }
+.chart-container { position: relative; height: 260px; width: 100%; min-width: 0; flex-grow: 1; }
+
+.stats-section { margin-bottom: 32px; }
+.stats-model-label { margin-bottom: 12px; font-size: 13px; font-weight: 500; font-family: var(--font-mono); display: flex; align-items: center; gap: 8px; color: var(--text-dim); }
+.stats-model-label::before { content: ''; display: block; width: 6px; height: 6px; border-radius: 50%; }
+.stats-model-label.chat::before { background: var(--chat-color); }
+.stats-model-label.reasoner::before { background: var(--reasoner-color); }
+
+.stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; }
+.stat-item { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.stat-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; font-weight: 500; }
+.stat-value { font-size: 18px; font-weight: 500; font-family: var(--font-mono); color: var(--text); }
+.stat-range { font-size: 12px; color: var(--text-muted); margin-top: 6px; font-family: var(--font-mono); }
+
+.table-section { margin-bottom: 32px; }
+.table-controls { display: flex; gap: 8px; margin-bottom: 16px; }
+.tab-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px; font-weight: 500; transition: all .2s ease; font-family: var(--font-sans); }
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { background: var(--card); border-color: var(--border); color: var(--text); }
+
+.table-responsive { width: 100%; border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+table { width: 100%; border-collapse: collapse; text-align: left; background: var(--card); table-layout: auto; word-break: break-word; }
+thead th { background: rgba(255,255,255,0.02); padding: 14px 16px; font-size: 12px; font-weight: 500; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+tbody td { padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text-dim); font-family: var(--font-mono); }
+tbody tr { transition: background .2s ease; }
+tbody tr:hover { background: rgba(255,255,255,0.02); }
+tbody tr:last-child td { border-bottom: none; }
+.no-data { text-align: center; padding: 48px; color: var(--text-muted); font-family: var(--font-sans); }
+
+@media (max-width: 1024px) {
+  .cards-row, .charts-grid { grid-template-columns: 1fr; }
+  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+  .stats-grid { grid-template-columns: repeat(3, 1fr); }
+  .container { padding: 24px; }
+  .header { padding: 20px 24px; }
+}
+@media (max-width: 640px) {
+  .metrics-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .stats-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .header { padding: 16px; flex-direction: column; gap: 16px; align-items: flex-start; }
+  .header-right { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .meta-info { flex-direction: column; gap: 4px; }
+  .container { padding: 16px; }
+  .cards-row, .charts-grid { gap: 16px; margin-bottom: 24px; }
+  .model-card, .chart-card, .stat-item { padding: 16px; }
+  .metric-value { font-size: 20px; }
+  .chart-container { height: 220px; }
+  /* 表格自适应缩小，不截断不滑动 */
+  table { font-size: 10px; width: 100%; table-layout: auto; }
+  thead th, tbody td { padding: 8px 4px; font-size: 10px; white-space: normal; word-break: break-all; }
+  .table-responsive { overflow-x: visible; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>DeepSeek API 性能监控</h1>
+  <div class="header-right">
+    <div class="status-badge" id="statusBadge">
+      <div class="status-dot"></div>
+      <span id="statusText">等待连接...</span>
+    </div>
+    <div class="meta-info">
+      <div>上次测试: <span id="lastRun">—</span></div>
+      <div>下次测试: <span id="nextRun">—</span></div>
+      <div>累计测试: <span id="totalCycles">—</span></div>
+    </div>
+    <div class="refresh-control">
+      <span class="refresh-countdown" id="refreshCountdown">下次刷新 30s</span>
+      <button class="refresh-btn" id="refreshBtn" title="立即刷新">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+    </div>
+    <a class="github-link" href="https://github.com/Lianues/ds-benchmark" target="_blank" rel="noopener" title="GitHub 仓库">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.4 3-.405 1.02.005 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+    </a>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Model Cards -->
+  <div class="cards-row">
+    <div class="model-card" id="cardChat">
+      <div class="card-header">
+        <div class="card-title" style="color:var(--chat-color)">deepseek-chat</div>
+        <div class="card-time" id="chatTime">暂无数据</div>
+      </div>
+      <div class="metrics-grid" style="grid-template-columns:repeat(3,1fr);">
+        <div class="metric-box">
+          <div class="metric-label">整体 TPS</div>
+          <div class="metric-value" id="chatOverall">—</div>
+          <div class="metric-sub" id="chatOutputTokens"></div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">首字时间</div>
+          <div class="metric-value" id="chatTTFT">—</div>
+          <div class="metric-sub" id="chatTTFTRange"></div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">内容 TPS</div>
+          <div class="metric-value" id="chatTPS">—</div>
+          <div class="metric-sub" id="chatTPSRange"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="model-card" id="cardReasoner">
+      <div class="card-header">
+        <div class="card-title" style="color:var(--reasoner-color)">deepseek-reasoner</div>
+        <div class="card-time" id="r1Time">暂无数据</div>
+      </div>
+      <div class="metrics-grid">
+        <div class="metric-box">
+          <div class="metric-label">整体 TPS</div>
+          <div class="metric-value" id="r1Overall">—</div>
+          <div class="metric-sub" id="r1TotalTime"></div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">首字时间</div>
+          <div class="metric-value" id="r1TTFT">—</div>
+          <div class="metric-sub" id="r1TTFTRange"></div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">内容 TPS</div>
+          <div class="metric-value" id="r1TPS">—</div>
+          <div class="metric-sub" id="r1TPSRange"></div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-label">思维链 TPS</div>
+          <div class="metric-value" id="r1ReasoningTps">—</div>
+          <div class="metric-sub" id="r1ThinkingTokens"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <h2 style="font-size:16px; font-weight:600;">📈 性能趋势</h2>
+    <div class="table-controls" id="chartRangeBar">
+      <button class="tab-btn" data-hours="3">3h</button>
+      <button class="tab-btn" data-hours="6">6h</button>
+      <button class="tab-btn" data-hours="24">24h</button>
+      <button class="tab-btn active" data-hours="72">3天</button>
+      <button class="tab-btn" data-hours="168">7天</button>
+      <button class="tab-btn" data-hours="0">全部</button>
+    </div>
+  </div>
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3>整体 TPS (tokens/s) 趋势</h3>
+      <div class="chart-container"><canvas id="chartOverall"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>首字时间 (ms) 趋势</h3>
+      <div class="chart-container"><canvas id="chartTTFT"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>内容 TPS (tokens/s) 趋势</h3>
+      <div class="chart-container"><canvas id="chartTPS"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h3>deepseek-reasoner 思维链趋势</h3>
+      <div class="chart-container"><canvas id="chartReasoning"></canvas></div>
+    </div>
+  </div>
+
+  <!-- 24h Stats -->
+  <div class="stats-section">
+    <div class="section-title">过去 24 小时统计</div>
+    <div class="stats-model-label chat" style="color:var(--chat-color)">deepseek-chat</div>
+    <div class="stats-grid" id="statsChat" style="margin-bottom:24px;"></div>
+    <div class="stats-model-label reasoner" style="color:var(--reasoner-color)">deepseek-reasoner</div>
+    <div class="stats-grid" id="statsR1"></div>
+  </div>
+
+  <!-- History Table -->
+  <div class="table-section">
+    <div class="section-title">历史记录</div>
+    <div class="table-controls">
+      <button class="tab-btn active" data-filter="all">全部</button>
+      <button class="tab-btn" data-filter="deepseek-chat">deepseek-chat</button>
+      <button class="tab-btn" data-filter="deepseek-reasoner">deepseek-reasoner</button>
+    </div>
+    <div class="table-responsive">
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>模型</th>
+            <th>首字时间</th>
+            <th>内容TPS</th>
+            <th>整体TPS</th>
+            <th>思维链TPS</th>
+            <th>思考时间</th>
+            <th>Completion</th>
+            <th>成功率</th>
+          </tr>
+        </thead>
+        <tbody id="historyBody">
+          <tr><td colspan="9" class="no-data">加载中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const REFRESH_INTERVAL = 30_000;
+let chartHours = 72;
+
+const CHAT_COLOR = '#60a5fa';
+const REASONER_COLOR = '#fb923c';
+const CHAT_BG = 'rgba(96,165,250,0.12)';
+const REASONER_BG = 'rgba(251,146,60,0.12)';
+
+let charts = {};
+
+function createChart(id, cfg) {
+  return new Chart(document.getElementById(id).getContext('2d'), cfg);
+}
+
+// 从 CSS 变量读取主题色
+function themeColors() {
+  const s = getComputedStyle(document.documentElement);
+  return {
+    text: s.getPropertyValue('--text').trim(),
+    dim:  s.getPropertyValue('--text-dim').trim(),
+    muted: s.getPropertyValue('--text-muted').trim(),
+    grid: s.getPropertyValue('--grid-line').trim(),
+    tooltipBg: s.getPropertyValue('--tooltip-bg').trim(),
+    border: s.getPropertyValue('--border').trim(),
+  };
+}
+
+function baseChartConfig(yLabel, datasets) {
+  const c = themeColors();
+  return {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: c.dim, font: { family: 'Inter, sans-serif', size: 12 }, usePointStyle: true, pointStyle: 'circle' } },
+        tooltip: { backgroundColor: c.tooltipBg, titleColor: c.text, bodyColor: c.text, borderColor: c.border, borderWidth: 1, padding: 12, displayColors: true, usePointStyle: true, boxWidth: 8, boxHeight: 8, bodyFont: { family: 'JetBrains Mono, monospace' } }
+      },
+      scales: {
+        x: { type: 'category', ticks: { color: c.muted, font: { family: 'JetBrains Mono, monospace', size: 10 }, maxRotation: 45, maxTicksLimit: 15 }, grid: { color: c.grid } },
+        y: { title: { display: true, text: yLabel, color: c.muted, font: { family: 'Inter, sans-serif', size: 11 } }, ticks: { color: c.muted, font: { family: 'JetBrains Mono, monospace', size: 11 } }, grid: { color: c.grid }, beginAtZero: false }
+      },
+      elements: { point: { radius: 0, hoverRadius: 4 }, line: { tension: 0.3, borderWidth: 1.5 } }
+    }
+  };
+}
+
+function initCharts() {
+  charts.tps = createChart('chartTPS', baseChartConfig('tokens/s', [
+    { label: 'deepseek-chat', data: [], borderColor: CHAT_COLOR, backgroundColor: CHAT_BG, pointBackgroundColor: CHAT_COLOR, pointBorderColor: CHAT_COLOR, fill: false },
+    { label: 'deepseek-reasoner', data: [], borderColor: REASONER_COLOR, backgroundColor: REASONER_BG, pointBackgroundColor: REASONER_COLOR, pointBorderColor: REASONER_COLOR, fill: false },
+  ]));
+  charts.ttft = createChart('chartTTFT', baseChartConfig('ms', [
+    { label: 'deepseek-chat', data: [], borderColor: CHAT_COLOR, backgroundColor: CHAT_BG, pointBackgroundColor: CHAT_COLOR, pointBorderColor: CHAT_COLOR, fill: false },
+    { label: 'deepseek-reasoner', data: [], borderColor: REASONER_COLOR, backgroundColor: REASONER_BG, pointBackgroundColor: REASONER_COLOR, pointBorderColor: REASONER_COLOR, fill: false },
+  ]));
+  charts.overall = createChart('chartOverall', baseChartConfig('tokens/s', [
+    { label: 'deepseek-chat', data: [], borderColor: CHAT_COLOR, backgroundColor: CHAT_BG, pointBackgroundColor: CHAT_COLOR, pointBorderColor: CHAT_COLOR, fill: false },
+    { label: 'deepseek-reasoner', data: [], borderColor: REASONER_COLOR, backgroundColor: REASONER_BG, pointBackgroundColor: REASONER_COLOR, pointBorderColor: REASONER_COLOR, fill: false },
+  ]));
+  charts.reasoning = createChart('chartReasoning', baseChartConfig('tokens/s', [
+    { label: 'deepseek-reasoner 思维链 TPS', data: [], borderColor: REASONER_COLOR, backgroundColor: REASONER_BG, pointBackgroundColor: REASONER_COLOR, pointBorderColor: REASONER_COLOR, fill: false },
+  ]));
+}
+
+// ─── Helpers ─────────────────────────────────
+
+async function fetchJSON(url) {
+  try { const r = await fetch(url); const d = await r.json(); return d.success ? d.data : null; }
+  catch { return null; }
+}
+
+function fmtTime(iso) {
+  if (!iso) return '—';
+  // 兼容三种格式：
+  //   ISO + Z 后缀:        "2025-01-01T15:00:00.000Z"        (新格式, UTC)
+  //   ISO + 时区偏移:      "2025-01-01T15:00:00+08:00"       (新格式)
+  //   旧的本地无时区格式:  "2025-01-01 15:00:00"             (历史数据)
+  let d;
+  const s = String(iso);
+  if (s.includes('T') || /[Z]$/i.test(s) || /[+-]\d{2}:?\d{2}$/.test(s)) {
+    d = new Date(s);  // 标准 ISO，浏览器自动按 UTC/时区解析并转本地
+  } else {
+    // 旧格式 "YYYY-MM-DD HH:MM:SS" — 当作 UTC 处理（避免歧义）
+    d = new Date(s.replace(' ', 'T') + 'Z');
+  }
+  return d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+function fmtMs(ms) {
+  if (ms == null || ms === 0) return '—';
+  return ms < 1000 ? ms.toFixed(0) + ' ms' : (ms / 1000).toFixed(1) + ' s';
+}
+
+function fmtTps(v) {
+  if (v == null || v === 0) return '—';
+  return v.toFixed(1);
+}
+
+// ─── Update Status ───────────────────────────
+
+async function updateStatus() {
+  const s = await fetchJSON('/api/status');
+  if (!s) return;
+  const badge = document.getElementById('statusBadge');
+  const text = document.getElementById('statusText');
+  if (s.is_running) {
+    badge.className = 'status-badge running';
+    text.textContent = '测试中' + (s.current_model ? ` (${s.current_model})` : '');
+  } else {
+    badge.className = 'status-badge';
+    text.textContent = '空闲等待中';
+  }
+  document.getElementById('lastRun').textContent = s.last_run_time ? fmtTime(s.last_run_time) : '—';
+  document.getElementById('nextRun').textContent = s.next_run_time ? fmtTime(s.next_run_time) : '—';
+  document.getElementById('totalCycles').textContent = s.total_cycles ?? '—';
+}
+
+// ─── Update Cards ────────────────────────────
+
+async function updateCards() {
+  const data = await fetchJSON('/api/latest');
+  if (!data) return;
+
+  const chat = data['deepseek-chat'];
+  const r1 = data['deepseek-reasoner'];
+
+  if (chat) {
+    document.getElementById('chatTime').textContent = fmtTime(chat.timestamp);
+    document.getElementById('chatTTFT').innerHTML = fmtMs(chat.avg_ttft_ms);
+    document.getElementById('chatTTFTRange').textContent = chat.min_ttft_ms ? `${fmtMs(chat.min_ttft_ms)} ~ ${fmtMs(chat.max_ttft_ms)}` : '';
+    document.getElementById('chatTPS').innerHTML = fmtTps(chat.avg_content_tps) + '<span class="metric-unit">t/s</span>';
+    document.getElementById('chatTPSRange').textContent = chat.min_content_tps ? `${fmtTps(chat.min_content_tps)} ~ ${fmtTps(chat.max_content_tps)}` : '';
+    document.getElementById('chatOverall').innerHTML = fmtTps(chat.avg_overall_tps) + '<span class="metric-unit">t/s</span>';
+    document.getElementById('chatOutputTokens').textContent = `输出 ${Math.round(chat.avg_output_tokens || 0)} tokens`;
+  }
+
+  if (r1) {
+    document.getElementById('r1Time').textContent = fmtTime(r1.timestamp);
+    document.getElementById('r1TTFT').innerHTML = fmtMs(r1.avg_ttft_ms);
+    document.getElementById('r1TTFTRange').textContent = r1.min_ttft_ms ? `${fmtMs(r1.min_ttft_ms)} ~ ${fmtMs(r1.max_ttft_ms)}` : '';
+    document.getElementById('r1TPS').innerHTML = fmtTps(r1.avg_content_tps) + '<span class="metric-unit">t/s</span>';
+    document.getElementById('r1TPSRange').textContent = r1.min_content_tps ? `${fmtTps(r1.min_content_tps)} ~ ${fmtTps(r1.max_content_tps)}` : '';
+    document.getElementById('r1ReasoningTps').innerHTML = fmtTps(r1.avg_reasoning_tps) + '<span class="metric-unit">t/s</span>';
+    document.getElementById('r1ThinkingTokens').textContent = `思考 ${fmtMs(r1.avg_thinking_duration_ms)} · ${Math.round(r1.avg_reasoning_tokens || 0)} tokens`;
+    document.getElementById('r1Overall').innerHTML = fmtTps(r1.avg_overall_tps) + '<span class="metric-unit">t/s</span>';
+    document.getElementById('r1TotalTime').textContent = `输出 ${Math.round(r1.avg_output_tokens || 0)} tokens`;
+  }
+}
+
+// ─── Update Charts ───────────────────────────
+
+async function updateCharts() {
+  const data = await fetchJSON(`/api/chart-data?hours=${chartHours}`);
+  if (!data) return;
+
+  const v3 = data['deepseek-chat'] || {};
+  const r1 = data['deepseek-reasoner'] || {};
+
+  const v3Labels = (v3.timestamps || []).map(t => fmtTime(t));
+  const r1Labels = (r1.timestamps || []).map(t => fmtTime(t));
+  const labels = v3Labels.length >= r1Labels.length ? v3Labels : r1Labels;
+
+  function mapData(times, values, base) {
+    if (!times || !values) return [];
+    const fmt = times.map(t => fmtTime(t));
+    return base.map(l => { const i = fmt.indexOf(l); return i >= 0 ? values[i] : null; });
+  }
+
+  charts.tps.data.labels = labels;
+  charts.tps.data.datasets[0].data = mapData(v3.timestamps, v3.content_tps, labels);
+  charts.tps.data.datasets[1].data = mapData(r1.timestamps, r1.content_tps, labels);
+  charts.tps.update('none');
+
+  charts.ttft.data.labels = labels;
+  charts.ttft.data.datasets[0].data = mapData(v3.timestamps, v3.ttft_ms, labels);
+  charts.ttft.data.datasets[1].data = mapData(r1.timestamps, r1.ttft_ms, labels);
+  charts.ttft.update('none');
+
+  charts.overall.data.labels = labels;
+  charts.overall.data.datasets[0].data = mapData(v3.timestamps, v3.overall_tps, labels);
+  charts.overall.data.datasets[1].data = mapData(r1.timestamps, r1.overall_tps, labels);
+  charts.overall.update('none');
+
+  charts.reasoning.data.labels = r1Labels;
+  charts.reasoning.data.datasets[0].data = r1.reasoning_tps || [];
+  charts.reasoning.update('none');
+}
+
+// ─── Update Stats ────────────────────────────
+
+async function updateStats() {
+  const chatStats = await fetchJSON('/api/stats?model=deepseek-chat&hours=24');
+  const r1Stats = await fetchJSON('/api/stats?model=deepseek-reasoner&hours=24');
+
+  function renderStats(el, stats, isReasoner) {
+    if (!stats || !stats.count) {
+      el.innerHTML = '<div class="stat-item" style="grid-column:1/-1"><div class="stat-label">暂无数据</div></div>';
+      return;
+    }
+    const items = [
+      { label: '测试批次', value: stats.count, unit: '次' },
+      { label: '平均首字时间', value: fmtMs(stats.avg_ttft_ms), range: `${fmtMs(stats.min_ttft_ms)} ~ ${fmtMs(stats.max_ttft_ms)}` },
+      { label: '平均内容 TPS', value: fmtTps(stats.avg_content_tps), unit: 't/s', range: `${fmtTps(stats.min_content_tps)} ~ ${fmtTps(stats.max_content_tps)}` },
+      { label: '平均整体 TPS', value: fmtTps(stats.avg_overall_tps), unit: 't/s', range: `${fmtTps(stats.min_overall_tps)} ~ ${fmtTps(stats.max_overall_tps)}` },
+    ];
+    if (isReasoner) {
+      items.push({ label: '平均思考时间', value: fmtMs(stats.avg_thinking_duration_ms), range: `${fmtMs(stats.min_thinking_duration_ms)} ~ ${fmtMs(stats.max_thinking_duration_ms)}` });
+    } else {
+      items.push({ label: '平均 Completion', value: Math.round(stats.avg_completion_tokens || 0), unit: 'tokens' });
+    }
+    el.innerHTML = items.map(it => `
+      <div class="stat-item">
+        <div class="stat-label">${it.label}</div>
+        <div class="stat-value">${it.value}${it.unit ? `<span class="metric-unit">${it.unit}</span>` : ''}</div>
+        ${it.range ? `<div class="stat-range">${it.range}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  renderStats(document.getElementById('statsChat'), chatStats, false);
+  renderStats(document.getElementById('statsR1'), r1Stats, true);
+}
+
+// ─── History Table ───────────────────────────
+
+let currentFilter = 'all';
+
+async function updateHistory() {
+  const param = currentFilter === 'all' ? '' : `model=${currentFilter}&`;
+  const data = await fetchJSON(`/api/batches?${param}limit=50`);
+  const tbody = document.getElementById('historyBody');
+  if (!data || data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="no-data">暂无数据</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map(b => {
+    const isR = b.model && b.model.includes('reasoner');
+    const color = isR ? REASONER_COLOR : CHAT_COLOR;
+    return `<tr>
+      <td>${fmtTime(b.timestamp)}</td>
+      <td><span style="color:${color}">${b.model}</span></td>
+      <td>${fmtMs(b.avg_ttft_ms)}</td>
+      <td>${fmtTps(b.avg_content_tps)} t/s</td>
+      <td>${fmtTps(b.avg_overall_tps)} t/s</td>
+      <td>${isR ? fmtTps(b.avg_reasoning_tps) + ' t/s' : '—'}</td>
+      <td>${isR ? fmtMs(b.avg_thinking_duration_ms) : '—'}</td>
+      <td>${Math.round(b.avg_completion_tokens || 0)}</td>
+      <td>${b.success_count}/${b.total_count}</td>
+    </tr>`;
+  }).join('');
+}
+
+// 历史表格筛选
+document.querySelectorAll('.tab-btn[data-filter]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentFilter = btn.dataset.filter;
+    document.querySelectorAll('.tab-btn[data-filter]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    updateHistory();
+  });
+});
+
+// 图表时间范围切换
+document.querySelectorAll('#chartRangeBar .tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    chartHours = parseInt(btn.dataset.hours);
+    document.querySelectorAll('#chartRangeBar .tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    updateCharts();
+  });
+});
+
+// ─── Init & Refresh ──────────────────────────
+
+async function refreshAll() {
+  await Promise.all([updateStatus(), updateCards(), updateCharts(), updateStats(), updateHistory()]);
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  initCharts();
+  refreshAll();
+  setupAutoRefresh();
+  setupFastStatusPolling();
+  setupThemeListener();
+});
+
+// ─── 自动刷新 + 倒计时 + 手动按钮 ──────────────
+
+let countdownSecs = REFRESH_INTERVAL / 1000;
+let countdownTimer = null;
+let refreshTimer = null;
+
+function setupAutoRefresh() {
+  const countdownEl = document.getElementById('refreshCountdown');
+  const btn = document.getElementById('refreshBtn');
+
+  function tick() {
+    countdownSecs -= 1;
+    if (countdownSecs <= 0) {
+      countdownEl.textContent = '刷新中...';
+    } else {
+      countdownEl.textContent = `下次刷新 ${countdownSecs}s`;
+    }
+  }
+
+  function scheduleNext() {
+    countdownSecs = REFRESH_INTERVAL / 1000;
+    countdownEl.textContent = `下次刷新 ${countdownSecs}s`;
+    clearInterval(countdownTimer);
+    countdownTimer = setInterval(tick, 1000);
+  }
+
+  async function doRefresh() {
+    btn.classList.add('spinning');
+    countdownEl.textContent = '刷新中...';
+    await refreshAll();
+    btn.classList.remove('spinning');
+    scheduleNext();
+  }
+
+  refreshTimer = setInterval(doRefresh, REFRESH_INTERVAL);
+  btn.addEventListener('click', () => {
+    clearInterval(refreshTimer);
+    doRefresh().then(() => {
+      refreshTimer = setInterval(doRefresh, REFRESH_INTERVAL);
+    });
+  });
+
+  scheduleNext();
+}
+
+// ─── 状态快速轮询（每 2s）—— 测试时实时显示当前在跑哪个模型 ──
+function setupFastStatusPolling() {
+  setInterval(updateStatus, 2000);
+}
+
+// ─── 系统主题切换监听 —— 销毁并重建图表，让颜色跟随系统主题 ──
+function setupThemeListener() {
+  if (!window.matchMedia) return;
+  const mq = window.matchMedia('(prefers-color-scheme: light)');
+  mq.addEventListener('change', () => {
+    // 销毁所有现有图表
+    Object.values(charts).forEach(c => c.destroy());
+    charts = {};
+    initCharts();
+    updateCharts();
+  });
+}
+</script>
+</body>
+</html>
