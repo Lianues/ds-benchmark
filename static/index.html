@@ -341,10 +341,26 @@ function baseChartConfig(yLabel, datasets) {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { labels: { color: c.dim, font: { family: 'Inter, sans-serif', size: 12 }, usePointStyle: true, pointStyle: 'circle' } },
-        tooltip: { backgroundColor: c.tooltipBg, titleColor: c.text, bodyColor: c.text, borderColor: c.border, borderWidth: 1, padding: 12, displayColors: true, usePointStyle: true, boxWidth: 8, boxHeight: 8, bodyFont: { family: 'JetBrains Mono, monospace' } }
+        tooltip: {
+          backgroundColor: c.tooltipBg, titleColor: c.text, bodyColor: c.text,
+          borderColor: c.border, borderWidth: 1, padding: 12,
+          displayColors: true, usePointStyle: true, boxWidth: 8, boxHeight: 8,
+          bodyFont: { family: 'JetBrains Mono, monospace' },
+          // label 是原始 ISO 时间戳，这里转成浏览器本地时区的完整时间（含秒）
+          callbacks: { title: (items) => items.length ? fmtTimeFull(items[0].label) : '' }
+        }
       },
       scales: {
-        x: { type: 'category', ticks: { color: c.muted, font: { family: 'JetBrains Mono, monospace', size: 10 }, maxRotation: 45, maxTicksLimit: 15 }, grid: { color: c.grid } },
+        x: {
+          type: 'category',
+          ticks: {
+            color: c.muted, font: { family: 'JetBrains Mono, monospace', size: 10 },
+            maxRotation: 45, maxTicksLimit: 15,
+            // labels 存的是原始 ISO，渲染时按浏览器本地时区转成短格式
+            callback: function(val) { return fmtTimeShort(this.getLabelForValue(val)); }
+          },
+          grid: { color: c.grid }
+        },
         y: { title: { display: true, text: yLabel, color: c.muted, font: { family: 'Inter, sans-serif', size: 11 } }, ticks: { color: c.muted, font: { family: 'JetBrains Mono, monospace', size: 11 } }, grid: { color: c.grid }, beginAtZero: false }
       },
       elements: { point: { radius: 0, hoverRadius: 4 }, line: { tension: 0.3, borderWidth: 1.5 } }
@@ -391,6 +407,34 @@ function fmtTime(iso) {
     // 旧格式 "YYYY-MM-DD HH:MM:SS" — 当作 UTC 处理（避免歧义）
     d = new Date(s.replace(' ', 'T') + 'Z');
   }
+  return d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+// 解析后端返回的时间戳为 Date 对象（浏览器本地时区）。
+// 兼容三种格式：带 Z 的 UTC、带偏移的 ISO、含/不含 T 的本地无时区字符串。
+function parseTs(iso) {
+  if (!iso) return null;
+  const s = String(iso);
+  let d;
+  if (s.includes('T') || /Z$/i.test(s) || /[+-]\d{2}:?\d{2}$/.test(s)) {
+    d = new Date(s);                          // 标准 ISO：浏览器按本地时区解析/转换
+  } else {
+    d = new Date(s.replace(' ', 'T') + 'Z');  // 旧格式兜底：当作 UTC
+  }
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// x 轴用：紧凑格式（不带秒）
+function fmtTimeShort(iso) {
+  const d = parseTs(iso);
+  if (!d) return '—';
+  return d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+
+// tooltip / 表格用：完整格式（带秒）
+function fmtTimeFull(iso) {
+  const d = parseTs(iso);
+  if (!d) return '—';
   return d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
 }
 
@@ -464,14 +508,14 @@ async function updateCharts() {
   const v3 = data['deepseek-chat'] || {};
   const r1 = data['deepseek-reasoner'] || {};
 
-  const v3Labels = (v3.timestamps || []).map(t => fmtTime(t));
-  const r1Labels = (r1.timestamps || []).map(t => fmtTime(t));
-  const labels = v3Labels.length >= r1Labels.length ? v3Labels : r1Labels;
+  // labels 直接保存原始 ISO 时间戳；x 轴/tooltip 由 Chart.js 回调按本地时区渲染
+  const v3Times = v3.timestamps || [];
+  const r1Times = r1.timestamps || [];
+  const labels = v3Times.length >= r1Times.length ? v3Times : r1Times;
 
   function mapData(times, values, base) {
     if (!times || !values) return [];
-    const fmt = times.map(t => fmtTime(t));
-    return base.map(l => { const i = fmt.indexOf(l); return i >= 0 ? values[i] : null; });
+    return base.map(l => { const i = times.indexOf(l); return i >= 0 ? values[i] : null; });
   }
 
   charts.tps.data.labels = labels;
@@ -489,7 +533,7 @@ async function updateCharts() {
   charts.overall.data.datasets[1].data = mapData(r1.timestamps, r1.overall_tps, labels);
   charts.overall.update('none');
 
-  charts.reasoning.data.labels = r1Labels;
+  charts.reasoning.data.labels = r1Times;
   charts.reasoning.data.datasets[0].data = r1.reasoning_tps || [];
   charts.reasoning.update('none');
 }
