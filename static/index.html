@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DeepSeek API 性能监控</title>
+<title>API 性能监控</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
@@ -23,8 +23,6 @@
   --grid-line: rgba(255,255,255,0.06);
   --grid-axis: #444444;
   --tooltip-bg: #0a0a0a;
-  --chat-color: #60a5fa;
-  --reasoner-color: #fb923c;
   --radius: 8px;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
@@ -76,12 +74,13 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text);
 .container { max-width: 1440px; margin: 0 auto; padding: 32px; }
 
 .cards-row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; min-width: 0; }
+.notice-banner { background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 24px; font-size: 13px; color: var(--text-dim); }
 .model-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; transition: all .2s ease; min-width: 0; }
 .model-card:hover { border-color: var(--border-hover); background: var(--card-hover); }
 .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
 .card-title { font-size: 15px; font-weight: 500; font-family: var(--font-mono); }
 .card-time { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
-.metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
 .metric-box { display: flex; flex-direction: column; }
 .metric-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; font-weight: 500; }
 .metric-value { font-size: 24px; font-weight: 500; font-family: var(--font-mono); letter-spacing: -0.02em; color: var(--text); }
@@ -92,14 +91,27 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text);
 
 .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; min-width: 0; }
 .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
-.chart-card h3 { font-size: 13px; font-weight: 500; margin-bottom: 20px; color: var(--text-dim); }
+.chart-card-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.chart-card h3 { font-size: 13px; font-weight: 500; color: var(--text-dim); }
+.chart-toggles { display: flex; gap: 12px; }
+.chart-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-muted); cursor: pointer; user-select: none; transition: color .2s; }
+.chart-toggle:hover { color: var(--text-dim); }
+.chart-toggle input { width: 13px; height: 13px; accent-color: var(--accent); cursor: pointer; margin: 0; }
+.chart-toggle .dash-mark { display: inline-block; width: 14px; border-top: 1.5px dashed currentColor; }
+.chart-toggle .solid-mark { display: inline-block; width: 14px; border-top: 1.5px solid currentColor; }
 .chart-container { position: relative; height: 260px; width: 100%; min-width: 0; flex-grow: 1; }
 
+.chart-legend { display: grid; grid-auto-flow: row; gap: 6px 16px; justify-content: center; align-items: center; margin-bottom: 14px; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); cursor: pointer; user-select: none; transition: opacity .2s; }
+.legend-item:hover { opacity: 0.8; }
+.legend-item.hidden { opacity: 0.3; }
+.legend-item.hidden .legend-label { text-decoration: line-through; }
+.legend-line { width: 20px; height: 0; flex-shrink: 0; border-top: 2px solid; }
+.legend-line.dashed { border-top-style: dashed; }
+
 .stats-section { margin-bottom: 32px; }
-.stats-model-label { margin-bottom: 12px; font-size: 13px; font-weight: 500; font-family: var(--font-mono); display: flex; align-items: center; gap: 8px; color: var(--text-dim); }
-.stats-model-label::before { content: ''; display: block; width: 6px; height: 6px; border-radius: 50%; }
-.stats-model-label.chat::before { background: var(--chat-color); }
-.stats-model-label.reasoner::before { background: var(--reasoner-color); }
+.stats-model-label { margin-bottom: 12px; font-size: 13px; font-weight: 500; font-family: var(--font-mono); display: flex; align-items: center; gap: 8px; }
+.stats-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
 .stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; }
 .stat-item { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
@@ -108,7 +120,7 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text);
 .stat-range { font-size: 12px; color: var(--text-muted); margin-top: 6px; font-family: var(--font-mono); }
 
 .table-section { margin-bottom: 32px; }
-.table-controls { display: flex; gap: 8px; margin-bottom: 16px; }
+.table-controls { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .tab-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 13px; font-weight: 500; transition: all .2s ease; font-family: var(--font-sans); }
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { background: var(--card); border-color: var(--border); color: var(--text); }
@@ -122,15 +134,26 @@ tbody tr:hover { background: rgba(255,255,255,0.02); }
 tbody tr:last-child td { border-bottom: none; }
 .no-data { text-align: center; padding: 48px; color: var(--text-muted); font-family: var(--font-sans); }
 
+/* ── 分页控件 ── */
+.pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+.pagination-info { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+.pagination-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.page-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--text-dim); cursor: pointer; font-size: 13px; font-weight: 500; font-family: var(--font-sans); transition: all .2s ease; min-width: 32px; }
+.page-btn:hover:not(:disabled) { color: var(--text); border-color: var(--border-hover); }
+.page-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.page-jump { background: var(--card); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 8px; font-size: 13px; font-family: var(--font-mono); width: 64px; text-align: center; outline: none; }
+.page-jump:focus { border-color: var(--accent); }
+.page-jump::-webkit-outer-spin-button, .page-jump::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.page-jump { -moz-appearance: textfield; }
+
 @media (max-width: 1024px) {
   .cards-row, .charts-grid { grid-template-columns: 1fr; }
-  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .stats-grid { grid-template-columns: repeat(3, 1fr); }
   .container { padding: 24px; }
   .header { padding: 20px 24px; }
 }
 @media (max-width: 640px) {
-  .metrics-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+  .metrics-grid { gap: 12px; }
   .stats-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
   .header { padding: 16px; flex-direction: column; gap: 16px; align-items: flex-start; }
   .header-right { flex-direction: column; align-items: flex-start; gap: 12px; }
@@ -150,7 +173,7 @@ tbody tr:last-child td { border-bottom: none; }
 <body>
 
 <div class="header">
-  <h1>DeepSeek API 性能监控</h1>
+  <h1>API 性能监控</h1>
   <div class="header-right">
     <div class="status-badge" id="statusBadge">
       <div class="status-dot"></div>
@@ -175,69 +198,20 @@ tbody tr:last-child td { border-bottom: none; }
 
 <div class="container">
 
-  <!-- Model Cards -->
-  <div class="cards-row">
-    <div class="model-card" id="cardChat">
-      <div class="card-header">
-        <div class="card-title" style="color:var(--chat-color)">deepseek-chat</div>
-        <div class="card-time" id="chatTime">暂无数据</div>
-      </div>
-      <div class="metrics-grid" style="grid-template-columns:repeat(3,1fr);">
-        <div class="metric-box">
-          <div class="metric-label">整体 TPS</div>
-          <div class="metric-value" id="chatOverall">—</div>
-          <div class="metric-sub" id="chatOutputTokens"></div>
-        </div>
-        <div class="metric-box">
-          <div class="metric-label">首字时间</div>
-          <div class="metric-value" id="chatTTFT">—</div>
-          <div class="metric-sub" id="chatTTFTRange"></div>
-        </div>
-        <div class="metric-box">
-          <div class="metric-label">内容 TPS</div>
-          <div class="metric-value" id="chatTPS">—</div>
-          <div class="metric-sub" id="chatTPSRange"></div>
-        </div>
-      </div>
-    </div>
+  <div class="notice-banner">思考模式 · 测试服务器使用美国服务器，国内用户酌情参考</div>
 
-    <div class="model-card" id="cardReasoner">
-      <div class="card-header">
-        <div class="card-title" style="color:var(--reasoner-color)">deepseek-reasoner</div>
-        <div class="card-time" id="r1Time">暂无数据</div>
-      </div>
-      <div class="metrics-grid">
-        <div class="metric-box">
-          <div class="metric-label">整体 TPS</div>
-          <div class="metric-value" id="r1Overall">—</div>
-          <div class="metric-sub" id="r1TotalTime"></div>
-        </div>
-        <div class="metric-box">
-          <div class="metric-label">首字时间</div>
-          <div class="metric-value" id="r1TTFT">—</div>
-          <div class="metric-sub" id="r1TTFTRange"></div>
-        </div>
-        <div class="metric-box">
-          <div class="metric-label">内容 TPS</div>
-          <div class="metric-value" id="r1TPS">—</div>
-          <div class="metric-sub" id="r1TPSRange"></div>
-        </div>
-        <div class="metric-box">
-          <div class="metric-label">思维链 TPS</div>
-          <div class="metric-value" id="r1ReasoningTps">—</div>
-          <div class="metric-sub" id="r1ThinkingTokens"></div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- Model Cards (动态生成) -->
+  <div class="cards-row" id="cardsRow"></div>
 
   <!-- Charts -->
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
     <h2 style="font-size:16px; font-weight:600;">📈 性能趋势</h2>
     <div class="table-controls" id="chartRangeBar">
+      <button class="tab-btn" data-hours="1">1h</button>
       <button class="tab-btn" data-hours="3">3h</button>
       <button class="tab-btn" data-hours="6">6h</button>
       <button class="tab-btn" data-hours="24">24h</button>
+      <button class="tab-btn" data-hours="48">2天</button>
       <button class="tab-btn active" data-hours="72">3天</button>
       <button class="tab-btn" data-hours="168">7天</button>
       <button class="tab-btn" data-hours="0">全部</button>
@@ -245,40 +219,59 @@ tbody tr:last-child td { border-bottom: none; }
   </div>
   <div class="charts-grid">
     <div class="chart-card">
-      <h3>整体 TPS (tokens/s) 趋势</h3>
+      <div class="chart-card-header"><h3>整体 TPS (tokens/s) 趋势</h3><div class="chart-toggles"><label class="chart-toggle" title="显示/隐藏所有实线（数据）"><input type="checkbox" data-toggle="data" checked><span class="solid-mark"></span>数据</label><label class="chart-toggle" title="显示/隐藏所有趋势线"><input type="checkbox" data-toggle="trend" checked><span class="dash-mark"></span>趋势</label></div></div>
+
+      <div class="chart-legend" id="legend-chartOverall"></div>
       <div class="chart-container"><canvas id="chartOverall"></canvas></div>
     </div>
     <div class="chart-card">
-      <h3>首字时间 (ms) 趋势</h3>
+      <div class="chart-card-header"><h3>首字时间 (ms) 趋势</h3><div class="chart-toggles"><label class="chart-toggle" title="显示/隐藏所有实线（数据）"><input type="checkbox" data-toggle="data" checked><span class="solid-mark"></span>数据</label><label class="chart-toggle" title="显示/隐藏所有趋势线"><input type="checkbox" data-toggle="trend" checked><span class="dash-mark"></span>趋势</label></div></div>
+
+      <div class="chart-legend" id="legend-chartTTFT"></div>
       <div class="chart-container"><canvas id="chartTTFT"></canvas></div>
     </div>
     <div class="chart-card">
-      <h3>内容 TPS (tokens/s) 趋势</h3>
+      <div class="chart-card-header"><h3>内容 TPS (tokens/s) 趋势</h3><div class="chart-toggles"><label class="chart-toggle" title="显示/隐藏所有实线（数据）"><input type="checkbox" data-toggle="data" checked><span class="solid-mark"></span>数据</label><label class="chart-toggle" title="显示/隐藏所有趋势线"><input type="checkbox" data-toggle="trend" checked><span class="dash-mark"></span>趋势</label></div></div>
+
+      <div class="chart-legend" id="legend-chartTPS"></div>
       <div class="chart-container"><canvas id="chartTPS"></canvas></div>
     </div>
     <div class="chart-card">
-      <h3>deepseek-reasoner 思维链趋势</h3>
+      <div class="chart-card-header"><h3>思维链 TPS (tokens/s) 趋势</h3><div class="chart-toggles"><label class="chart-toggle" title="显示/隐藏所有实线（数据）"><input type="checkbox" data-toggle="data" checked><span class="solid-mark"></span>数据</label><label class="chart-toggle" title="显示/隐藏所有趋势线"><input type="checkbox" data-toggle="trend" checked><span class="dash-mark"></span>趋势</label></div></div>
+
+      <div class="chart-legend" id="legend-chartReasoning"></div>
       <div class="chart-container"><canvas id="chartReasoning"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-header"><h3>请求成功率 (%) 趋势</h3><div class="chart-toggles"><label class="chart-toggle" title="显示/隐藏所有实线（数据）"><input type="checkbox" data-toggle="data" checked><span class="solid-mark"></span>数据</label><label class="chart-toggle" title="显示/隐藏所有趋势线"><input type="checkbox" data-toggle="trend" checked><span class="dash-mark"></span>趋势</label></div></div>
+
+      <div class="chart-legend" id="legend-chartSuccess"></div>
+      <div class="chart-container"><canvas id="chartSuccess"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-header"><h3>内容 Token 趋势</h3><div class="chart-toggles"><label class="chart-toggle" title="显示/隐藏所有实线（数据）"><input type="checkbox" data-toggle="data" checked><span class="solid-mark"></span>数据</label><label class="chart-toggle" title="显示/隐藏所有趋势线"><input type="checkbox" data-toggle="trend" checked><span class="dash-mark"></span>趋势</label></div></div>
+
+      <div class="chart-legend" id="legend-chartContentTokens"></div>
+      <div class="chart-container"><canvas id="chartContentTokens"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-header"><h3>思考 Token 趋势</h3><div class="chart-toggles"><label class="chart-toggle" title="显示/隐藏所有实线（数据）"><input type="checkbox" data-toggle="data" checked><span class="solid-mark"></span>数据</label><label class="chart-toggle" title="显示/隐藏所有趋势线"><input type="checkbox" data-toggle="trend" checked><span class="dash-mark"></span>趋势</label></div></div>
+
+      <div class="chart-legend" id="legend-chartReasoningTokens"></div>
+      <div class="chart-container"><canvas id="chartReasoningTokens"></canvas></div>
     </div>
   </div>
 
-  <!-- 24h Stats -->
+  <!-- 24h Stats (动态生成) -->
   <div class="stats-section">
     <div class="section-title">过去 24 小时统计</div>
-    <div class="stats-model-label chat" style="color:var(--chat-color)">deepseek-chat</div>
-    <div class="stats-grid" id="statsChat" style="margin-bottom:24px;"></div>
-    <div class="stats-model-label reasoner" style="color:var(--reasoner-color)">deepseek-reasoner</div>
-    <div class="stats-grid" id="statsR1"></div>
+    <div id="statsContainer"></div>
   </div>
 
   <!-- History Table -->
   <div class="table-section">
     <div class="section-title">历史记录</div>
-    <div class="table-controls">
-      <button class="tab-btn active" data-filter="all">全部</button>
-      <button class="tab-btn" data-filter="deepseek-chat">deepseek-chat</button>
-      <button class="tab-btn" data-filter="deepseek-reasoner">deepseek-reasoner</button>
-    </div>
+    <div class="table-controls" id="historyFilters"></div>
     <div class="table-responsive">
       <table>
         <thead>
@@ -299,26 +292,185 @@ tbody tr:last-child td { border-bottom: none; }
         </tbody>
       </table>
     </div>
+    <div class="pagination" id="historyPagination">
+      <div class="pagination-info" id="paginationInfo">—</div>
+      <div class="pagination-controls">
+        <button class="page-btn" id="pageFirst" title="首页">«</button>
+        <button class="page-btn" id="pagePrev" title="上一页">‹ 上一页</button>
+        <input class="page-jump" id="pageJump" type="number" min="1" value="1" title="跳转到指定页" />
+        <button class="page-btn" id="pageNext" title="下一页">下一页 ›</button>
+        <button class="page-btn" id="pageLast" title="末页">»</button>
+      </div>
+    </div>
   </div>
 
 </div>
 
 <script>
+// ─── 模型配置（唯一需要修改的地方）──────────────────
+const MODELS = [
+  { key: 'deepseek-v4-pro',   prefix: 'pro',   color: '#60a5fa', bg: 'rgba(96,165,250,0.12)',  label: 'V4 Pro' },
+  { key: 'deepseek-v4-flash', prefix: 'flash', color: '#fb923c', bg: 'rgba(251,146,60,0.12)',  label: 'V4 Flash' },
+  { key: 'glm-5.1',           prefix: 'glm',   color: '#a78bfa', bg: 'rgba(167,139,250,0.12)', label: 'GLM-5.1' },
+  { key: 'kimi-k2.6',         prefix: 'kimi',  color: '#34d399', bg: 'rgba(52,211,153,0.12)',   label: 'Kimi K2.6' },
+];
+const MODEL_COLOR = Object.fromEntries(MODELS.map(m => [m.key, m.color]));
+
+// ─── 常量 ─────────────────────────────────────
 const REFRESH_INTERVAL = 30_000;
-let chartHours = 72;
-
-const CHAT_COLOR = '#60a5fa';
-const REASONER_COLOR = '#fb923c';
-const CHAT_BG = 'rgba(96,165,250,0.12)';
-const REASONER_BG = 'rgba(251,146,60,0.12)';
-
+const CHART_HOURS_KEY = 'ds-bench:chartHours';
+const VALID_HOURS = [0, 1, 3, 6, 24, 48, 72, 168];
+function loadChartHours() {
+  const v = parseInt(localStorage.getItem(CHART_HOURS_KEY));
+  return VALID_HOURS.includes(v) ? v : 72;
+}
+let chartHours = loadChartHours();
 let charts = {};
+
+// ─── DOM 生成 ─────────────────────────────────
+
+function metricBox(label, valueId, subId) {
+  return `<div class="metric-box">
+    <div class="metric-label">${label}</div>
+    <div class="metric-value" id="${valueId}">—</div>
+    <div class="metric-sub" id="${subId}"></div>
+  </div>`;
+}
+
+function generateCards() {
+  document.getElementById('cardsRow').innerHTML = MODELS.map(m => `
+    <div class="model-card">
+      <div class="card-header">
+        <div class="card-title" style="color:${m.color}">${m.key}</div>
+        <div class="card-time" id="${m.prefix}Time">暂无数据</div>
+      </div>
+      <div class="metrics-grid">
+        ${metricBox('整体 TPS',   m.prefix+'Overall',         m.prefix+'OutputTokens')}
+        ${metricBox('首字时间',   m.prefix+'TTFT',             m.prefix+'TTFTRange')}
+        ${metricBox('内容 TPS',   m.prefix+'TPS',              m.prefix+'TPSRange')}
+        ${metricBox('思维链 TPS', m.prefix+'ReasoningTps',     m.prefix+'ThinkingTokens')}
+        ${metricBox('内容 Token', m.prefix+'ContentTokens',    m.prefix+'ContentTokensSub')}
+        ${metricBox('思考 Token', m.prefix+'ReasoningTokens',  m.prefix+'ReasoningTokensSub')}
+        ${metricBox('成功率',     m.prefix+'Success',          m.prefix+'SuccessSub')}
+      </div>
+    </div>`).join('');
+}
+
+function generateStats() {
+  document.getElementById('statsContainer').innerHTML = MODELS.map((m, i) => `
+    <div class="stats-model-label" style="color:${m.color}${i > 0 ? ';margin-top:24px' : ''}">
+      <span class="stats-dot" style="background:${m.color}"></span>
+      ${m.key}
+    </div>
+    <div class="stats-grid" id="stats_${m.prefix}"></div>
+  `).join('');
+}
+
+function generateHistoryFilters() {
+  const el = document.getElementById('historyFilters');
+  el.innerHTML = `<button class="tab-btn active" data-filter="all">全部</button>`
+    + MODELS.map(m => `<button class="tab-btn" data-filter="${m.key}">${m.key}</button>`).join('');
+  el.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentFilter = btn.dataset.filter;
+      currentPage = 1;
+      el.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      updateHistory();
+    });
+  });
+}
+
+// ─── 主题 & 图表工具 ──────────────────────────
+
+// 自定义 HTML 图例插件：分两行显示（实线 / 趋势线）
+const htmlLegendPlugin = {
+  id: 'htmlLegend',
+  afterUpdate(chart) {
+    const legendEl = document.getElementById('legend-' + chart.canvas.id);
+    if (!legendEl) return;
+
+    const n = MODELS.length;
+
+    function renderItem(dsIndex) {
+      const ds = chart.data.datasets[dsIndex];
+      if (!ds) return '';
+      const hidden = !chart.isDatasetVisible(dsIndex);
+      const isTrend = ds.borderDash && ds.borderDash.length > 0;
+      return `<span class="legend-item${hidden ? ' hidden' : ''}" data-idx="${dsIndex}">
+        <span class="legend-line${isTrend ? ' dashed' : ''}" style="border-color:${ds.borderColor}"></span>
+        <span class="legend-label">${ds.label}</span>
+      </span>`;
+    }
+
+    // 用 N 列 Grid，2 行：第 1 行实线 (数据)，第 2 行虚线 (趋势)
+    // grid-auto-flow: row 会按顺序填充 → item[i] 与 item[n+i] 自动对齐到同一列
+    legendEl.style.gridTemplateColumns = `repeat(${n}, auto)`;
+    const row1 = Array.from({length: n}, (_, i) => renderItem(i)).join('');
+    const row2 = Array.from({length: n}, (_, i) => renderItem(n + i)).join('');
+    legendEl.innerHTML = row1 + row2;
+
+    // 点击切换 dataset 可见性
+    legendEl.querySelectorAll('.legend-item').forEach(el => {
+      el.onclick = () => {
+        const idx = parseInt(el.dataset.idx);
+        chart.setDatasetVisibility(idx, !chart.isDatasetVisible(idx));
+        chart.update();
+      };
+    });
+
+    // 同步图表卡片右上角的"数据 / 趋势"复选框状态
+    const card = chart.canvas.closest('.chart-card');
+    if (card) {
+      const dataCb  = card.querySelector('input[data-toggle="data"]');
+      const trendCb = card.querySelector('input[data-toggle="trend"]');
+      syncGroupCheckbox(chart, dataCb,  0, n);
+      syncGroupCheckbox(chart, trendCb, n, n);
+    }
+  }
+};
+Chart.register(htmlLegendPlugin);
+
+// 同步一组 dataset 的可见性状态到复选框：全开=checked，全关=unchecked，部分=indeterminate
+function syncGroupCheckbox(chart, checkbox, startIdx, count) {
+  if (!checkbox) return;
+  let visibleCount = 0;
+  for (let i = startIdx; i < startIdx + count; i++) {
+    if (chart.isDatasetVisible(i)) visibleCount++;
+  }
+  if (visibleCount === count) {
+    checkbox.checked = true;
+    checkbox.indeterminate = false;
+  } else if (visibleCount === 0) {
+    checkbox.checked = false;
+    checkbox.indeterminate = false;
+  } else {
+    checkbox.checked = false;
+    checkbox.indeterminate = true;
+  }
+}
+
+// 一组 dataset (实线 / 趋势) 整体显示或隐藏
+function setGroupVisibility(chart, startIdx, count, visible) {
+  for (let i = startIdx; i < startIdx + count; i++) {
+    chart.setDatasetVisibility(i, visible);
+  }
+  chart.update();
+}
+
+// 给某个图表卡片绑定 toggle 事件
+function setupChartToggles(canvasId, chart) {
+  const card = document.getElementById(canvasId).closest('.chart-card');
+  if (!card) return;
+  const n = MODELS.length;
+  card.querySelector('input[data-toggle="data"]') ?.addEventListener('change', e => setGroupVisibility(chart, 0, n, e.target.checked));
+  card.querySelector('input[data-toggle="trend"]')?.addEventListener('change', e => setGroupVisibility(chart, n, n, e.target.checked));
+}
 
 function createChart(id, cfg) {
   return new Chart(document.getElementById(id).getContext('2d'), cfg);
 }
 
-// 从 CSS 变量读取主题色
 function themeColors() {
   const s = getComputedStyle(document.documentElement);
   return {
@@ -340,14 +492,25 @@ function baseChartConfig(yLabel, datasets) {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { labels: { color: c.dim, font: { family: 'Inter, sans-serif', size: 12 }, usePointStyle: true, pointStyle: 'circle' } },
+        legend: { display: false },
         tooltip: {
           backgroundColor: c.tooltipBg, titleColor: c.text, bodyColor: c.text,
           borderColor: c.border, borderWidth: 1, padding: 12,
           displayColors: true, usePointStyle: true, boxWidth: 8, boxHeight: 8,
           bodyFont: { family: 'JetBrains Mono, monospace' },
-          // label 是原始 ISO 时间戳，这里转成浏览器本地时区的完整时间（含秒）
-          callbacks: { title: (items) => items.length ? fmtTimeFull(items[0].label) : '' }
+          callbacks: {
+            title: (items) => items.length ? fmtTimeFull(items[0].label) : '',
+            labelColor: function(context) {
+              const ds = context.dataset;
+              const isTrend = ds.borderDash && ds.borderDash.length > 0;
+              const tooltipBg = getComputedStyle(document.documentElement).getPropertyValue('--tooltip-bg').trim();
+              return {
+                borderColor: ds.borderColor,
+                backgroundColor: isTrend ? tooltipBg : ds.borderColor,
+                borderWidth: isTrend ? 2 : 0,
+              };
+            }
+          }
         }
       },
       scales: {
@@ -356,7 +519,6 @@ function baseChartConfig(yLabel, datasets) {
           ticks: {
             color: c.muted, font: { family: 'JetBrains Mono, monospace', size: 10 },
             maxRotation: 45, maxTicksLimit: 15,
-            // labels 存的是原始 ISO，渲染时按浏览器本地时区转成短格式
             callback: function(val) { return fmtTimeShort(this.getLabelForValue(val)); }
           },
           grid: { color: c.grid }
@@ -368,22 +530,93 @@ function baseChartConfig(yLabel, datasets) {
   };
 }
 
+// 为单个模型生成数据线 dataset
+function makeDataset(m) {
+  return { label: m.key, data: [], borderColor: m.color, backgroundColor: m.bg, pointBackgroundColor: m.color, pointBorderColor: m.color, fill: false };
+}
+
+// 为单个模型生成趋势线 dataset (虚线)
+function makeTrendDataset(m) {
+  return {
+    label: m.label + ' · 趋势', data: [],
+    borderColor: m.color, backgroundColor: 'transparent',
+    borderDash: [6, 4], borderWidth: 1.5,
+    pointStyle: 'circle', pointBackgroundColor: 'transparent',
+    pointBorderColor: m.color, pointBorderWidth: 1.5,
+    pointRadius: 0, pointHoverRadius: 0,
+    fill: false, tension: 0.4, spanGaps: true,
+  };
+}
+
+// 生成全部 datasets: [model0, model1, ..., trend0, trend1, ...]
+function allDatasets() {
+  return [...MODELS.map(makeDataset), ...MODELS.map(makeTrendDataset)];
+}
+
+// 简单移动平均 (SMA)
+function movingAverage(values, window) {
+  if (!values || values.length === 0) return [];
+  const w = Math.max(1, window | 0);
+  const out = [];
+  for (let i = 0; i < values.length; i++) {
+    const start = Math.max(0, i - w + 1);
+    let sum = 0, cnt = 0;
+    for (let j = start; j <= i; j++) {
+      const v = values[j];
+      if (v != null && !isNaN(v)) { sum += v; cnt++; }
+    }
+    out.push(cnt > 0 ? sum / cnt : null);
+  }
+  return out;
+}
+
+function chooseWindow(n) {
+  if (n < 4) return 1;
+  return Math.max(3, Math.min(15, Math.round(n / 6)));
+}
+
+// 更新图表：接受 labels + 每个模型的数据数组
+function applyChartData(chart, labels, modelsData) {
+  const w = chooseWindow(labels.length);
+  const n = MODELS.length;
+  chart.data.labels = labels;
+  for (let i = 0; i < n; i++) {
+    chart.data.datasets[i].data = modelsData[i] || [];
+    chart.data.datasets[n + i].data = movingAverage(modelsData[i] || [], w);
+  }
+  chart.update('none');
+}
+
 function initCharts() {
-  charts.tps = createChart('chartTPS', baseChartConfig('tokens/s', [
-    { label: 'deepseek-chat', data: [], borderColor: CHAT_COLOR, backgroundColor: CHAT_BG, pointBackgroundColor: CHAT_COLOR, pointBorderColor: CHAT_COLOR, fill: false },
-    { label: 'deepseek-reasoner', data: [], borderColor: REASONER_COLOR, backgroundColor: REASONER_BG, pointBackgroundColor: REASONER_COLOR, pointBorderColor: REASONER_COLOR, fill: false },
-  ]));
-  charts.ttft = createChart('chartTTFT', baseChartConfig('ms', [
-    { label: 'deepseek-chat', data: [], borderColor: CHAT_COLOR, backgroundColor: CHAT_BG, pointBackgroundColor: CHAT_COLOR, pointBorderColor: CHAT_COLOR, fill: false },
-    { label: 'deepseek-reasoner', data: [], borderColor: REASONER_COLOR, backgroundColor: REASONER_BG, pointBackgroundColor: REASONER_COLOR, pointBorderColor: REASONER_COLOR, fill: false },
-  ]));
-  charts.overall = createChart('chartOverall', baseChartConfig('tokens/s', [
-    { label: 'deepseek-chat', data: [], borderColor: CHAT_COLOR, backgroundColor: CHAT_BG, pointBackgroundColor: CHAT_COLOR, pointBorderColor: CHAT_COLOR, fill: false },
-    { label: 'deepseek-reasoner', data: [], borderColor: REASONER_COLOR, backgroundColor: REASONER_BG, pointBackgroundColor: REASONER_COLOR, pointBorderColor: REASONER_COLOR, fill: false },
-  ]));
-  charts.reasoning = createChart('chartReasoning', baseChartConfig('tokens/s', [
-    { label: 'deepseek-reasoner 思维链 TPS', data: [], borderColor: REASONER_COLOR, backgroundColor: REASONER_BG, pointBackgroundColor: REASONER_COLOR, pointBorderColor: REASONER_COLOR, fill: false },
-  ]));
+  charts.tps      = createChart('chartTPS',      baseChartConfig('tokens/s', allDatasets()));
+  charts.ttft     = createChart('chartTTFT',     baseChartConfig('ms',       allDatasets()));
+  charts.overall  = createChart('chartOverall',  baseChartConfig('tokens/s', allDatasets()));
+  charts.reasoning = createChart('chartReasoning', baseChartConfig('tokens/s', allDatasets()));
+
+  // 成功率图：y 轴固定 0-100%
+  const successCfg = baseChartConfig('%', allDatasets());
+  successCfg.options.scales.y.beginAtZero = true;
+  successCfg.options.scales.y.suggestedMin = 0;
+  successCfg.options.scales.y.suggestedMax = 100;
+  successCfg.options.scales.y.ticks.callback = (v) => v + '%';
+  successCfg.options.elements = {
+    point: {
+      radius: (ctx) => (ctx.raw != null && ctx.raw < 100) ? 4 : 0,
+      hoverRadius: 5,
+    },
+    line: { tension: 0.3, borderWidth: 1.5 },
+  };
+  charts.success = createChart('chartSuccess', successCfg);
+
+  charts.contentTokens   = createChart('chartContentTokens',   baseChartConfig('tokens', allDatasets()));
+  charts.reasoningTokens = createChart('chartReasoningTokens', baseChartConfig('tokens', allDatasets()));
+
+  // 给所有图表的右上角 toggle 复选框绑定事件
+  Object.entries({
+    chartTPS: charts.tps, chartTTFT: charts.ttft, chartOverall: charts.overall,
+    chartReasoning: charts.reasoning, chartSuccess: charts.success,
+    chartContentTokens: charts.contentTokens, chartReasoningTokens: charts.reasoningTokens,
+  }).forEach(([id, chart]) => setupChartToggles(id, chart));
 }
 
 // ─── Helpers ─────────────────────────────────
@@ -395,43 +628,34 @@ async function fetchJSON(url) {
 
 function fmtTime(iso) {
   if (!iso) return '—';
-  // 兼容三种格式：
-  //   ISO + Z 后缀:        "2025-01-01T15:00:00.000Z"        (新格式, UTC)
-  //   ISO + 时区偏移:      "2025-01-01T15:00:00+08:00"       (新格式)
-  //   旧的本地无时区格式:  "2025-01-01 15:00:00"             (历史数据)
   let d;
   const s = String(iso);
   if (s.includes('T') || /[Z]$/i.test(s) || /[+-]\d{2}:?\d{2}$/.test(s)) {
-    d = new Date(s);  // 标准 ISO，浏览器自动按 UTC/时区解析并转本地
+    d = new Date(s);
   } else {
-    // 旧格式 "YYYY-MM-DD HH:MM:SS" — 当作 UTC 处理（避免歧义）
     d = new Date(s.replace(' ', 'T') + 'Z');
   }
   return d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
 }
 
-// 解析后端返回的时间戳为 Date 对象（浏览器本地时区）。
-// 兼容三种格式：带 Z 的 UTC、带偏移的 ISO、含/不含 T 的本地无时区字符串。
 function parseTs(iso) {
   if (!iso) return null;
   const s = String(iso);
   let d;
   if (s.includes('T') || /Z$/i.test(s) || /[+-]\d{2}:?\d{2}$/.test(s)) {
-    d = new Date(s);                          // 标准 ISO：浏览器按本地时区解析/转换
+    d = new Date(s);
   } else {
-    d = new Date(s.replace(' ', 'T') + 'Z');  // 旧格式兜底：当作 UTC
+    d = new Date(s.replace(' ', 'T') + 'Z');
   }
   return isNaN(d.getTime()) ? null : d;
 }
 
-// x 轴用：紧凑格式（不带秒）
 function fmtTimeShort(iso) {
   const d = parseTs(iso);
   if (!d) return '—';
   return d.toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
 }
 
-// tooltip / 表格用：完整格式（带秒）
 function fmtTimeFull(iso) {
   const d = parseTs(iso);
   if (!d) return '—';
@@ -446,6 +670,18 @@ function fmtMs(ms) {
 function fmtTps(v) {
   if (v == null || v === 0) return '—';
   return v.toFixed(1);
+}
+
+function fmtRate(sc, tc) {
+  if (tc == null || tc === 0) return { html: '—', sub: '' };
+  const pct = sc / tc * 100;
+  let color = 'var(--text)';
+  if (pct < 100) color = '#fb923c';
+  if (pct < 60)  color = '#ef4444';
+  return {
+    html: `<span style="color:${color}">${pct.toFixed(0)}<span class="metric-unit">%</span></span>`,
+    sub: `${sc} / ${tc} 成功`
+  };
 }
 
 // ─── Update Status ───────────────────────────
@@ -469,34 +705,30 @@ async function updateStatus() {
 
 // ─── Update Cards ────────────────────────────
 
+function updateModelCard(d, prefix) {
+  if (!d) return;
+  document.getElementById(prefix + 'Time').textContent = fmtTime(d.timestamp);
+  document.getElementById(prefix + 'Overall').innerHTML = fmtTps(d.avg_overall_tps) + '<span class="metric-unit">t/s</span>';
+  document.getElementById(prefix + 'OutputTokens').textContent = `输出 ${Math.round(d.avg_output_tokens || 0)} tokens`;
+  document.getElementById(prefix + 'TTFT').innerHTML = fmtMs(d.avg_ttft_ms);
+  document.getElementById(prefix + 'TTFTRange').textContent = d.min_ttft_ms ? `${fmtMs(d.min_ttft_ms)} ~ ${fmtMs(d.max_ttft_ms)}` : '';
+  document.getElementById(prefix + 'TPS').innerHTML = fmtTps(d.avg_content_tps) + '<span class="metric-unit">t/s</span>';
+  document.getElementById(prefix + 'TPSRange').textContent = d.min_content_tps ? `${fmtTps(d.min_content_tps)} ~ ${fmtTps(d.max_content_tps)}` : '';
+  document.getElementById(prefix + 'ReasoningTps').innerHTML = fmtTps(d.avg_reasoning_tps) + '<span class="metric-unit">t/s</span>';
+  document.getElementById(prefix + 'ThinkingTokens').textContent = `思考 ${fmtMs(d.avg_thinking_duration_ms)} · ${Math.round(d.avg_reasoning_tokens || 0)} tokens`;
+  document.getElementById(prefix + 'ContentTokens').innerHTML = Math.round(d.avg_output_tokens || 0);
+  document.getElementById(prefix + 'ContentTokensSub').textContent = 'tokens';
+  document.getElementById(prefix + 'ReasoningTokens').innerHTML = Math.round(d.avg_reasoning_tokens || 0);
+  document.getElementById(prefix + 'ReasoningTokensSub').textContent = 'tokens';
+  const cr = fmtRate(d.success_count, d.total_count);
+  document.getElementById(prefix + 'Success').innerHTML = cr.html;
+  document.getElementById(prefix + 'SuccessSub').textContent = cr.sub;
+}
+
 async function updateCards() {
   const data = await fetchJSON('/api/latest');
   if (!data) return;
-
-  const chat = data['deepseek-chat'];
-  const r1 = data['deepseek-reasoner'];
-
-  if (chat) {
-    document.getElementById('chatTime').textContent = fmtTime(chat.timestamp);
-    document.getElementById('chatTTFT').innerHTML = fmtMs(chat.avg_ttft_ms);
-    document.getElementById('chatTTFTRange').textContent = chat.min_ttft_ms ? `${fmtMs(chat.min_ttft_ms)} ~ ${fmtMs(chat.max_ttft_ms)}` : '';
-    document.getElementById('chatTPS').innerHTML = fmtTps(chat.avg_content_tps) + '<span class="metric-unit">t/s</span>';
-    document.getElementById('chatTPSRange').textContent = chat.min_content_tps ? `${fmtTps(chat.min_content_tps)} ~ ${fmtTps(chat.max_content_tps)}` : '';
-    document.getElementById('chatOverall').innerHTML = fmtTps(chat.avg_overall_tps) + '<span class="metric-unit">t/s</span>';
-    document.getElementById('chatOutputTokens').textContent = `输出 ${Math.round(chat.avg_output_tokens || 0)} tokens`;
-  }
-
-  if (r1) {
-    document.getElementById('r1Time').textContent = fmtTime(r1.timestamp);
-    document.getElementById('r1TTFT').innerHTML = fmtMs(r1.avg_ttft_ms);
-    document.getElementById('r1TTFTRange').textContent = r1.min_ttft_ms ? `${fmtMs(r1.min_ttft_ms)} ~ ${fmtMs(r1.max_ttft_ms)}` : '';
-    document.getElementById('r1TPS').innerHTML = fmtTps(r1.avg_content_tps) + '<span class="metric-unit">t/s</span>';
-    document.getElementById('r1TPSRange').textContent = r1.min_content_tps ? `${fmtTps(r1.min_content_tps)} ~ ${fmtTps(r1.max_content_tps)}` : '';
-    document.getElementById('r1ReasoningTps').innerHTML = fmtTps(r1.avg_reasoning_tps) + '<span class="metric-unit">t/s</span>';
-    document.getElementById('r1ThinkingTokens').textContent = `思考 ${fmtMs(r1.avg_thinking_duration_ms)} · ${Math.round(r1.avg_reasoning_tokens || 0)} tokens`;
-    document.getElementById('r1Overall').innerHTML = fmtTps(r1.avg_overall_tps) + '<span class="metric-unit">t/s</span>';
-    document.getElementById('r1TotalTime').textContent = `输出 ${Math.round(r1.avg_output_tokens || 0)} tokens`;
-  }
+  MODELS.forEach(m => updateModelCard(data[m.key], m.prefix));
 }
 
 // ─── Update Charts ───────────────────────────
@@ -505,117 +737,176 @@ async function updateCharts() {
   const data = await fetchJSON(`/api/chart-data?hours=${chartHours}`);
   if (!data) return;
 
-  const v3 = data['deepseek-chat'] || {};
-  const r1 = data['deepseek-reasoner'] || {};
+  // 合并所有模型的时间戳为统一的 x 轴
+  const tsSet = new Set();
+  MODELS.forEach(m => {
+    const md = data[m.key] || {};
+    (md.timestamps || []).forEach(t => tsSet.add(t));
+  });
+  const labels = [...tsSet].sort();
 
-  // labels 直接保存原始 ISO 时间戳；x 轴/tooltip 由 Chart.js 回调按本地时区渲染
-  const v3Times = v3.timestamps || [];
-  const r1Times = r1.timestamps || [];
-  const labels = v3Times.length >= r1Times.length ? v3Times : r1Times;
-
-  function mapData(times, values, base) {
-    if (!times || !values) return [];
-    return base.map(l => { const i = times.indexOf(l); return i >= 0 ? values[i] : null; });
+  // 将模型数据映射到统一时间轴
+  function mapData(modelKey, field) {
+    const md = data[modelKey] || {};
+    const times = md.timestamps || [];
+    const values = md[field] || [];
+    return labels.map(l => { const i = times.indexOf(l); return i >= 0 ? values[i] : null; });
+  }
+  function modelsField(field) {
+    return MODELS.map(m => mapData(m.key, field));
   }
 
-  charts.tps.data.labels = labels;
-  charts.tps.data.datasets[0].data = mapData(v3.timestamps, v3.content_tps, labels);
-  charts.tps.data.datasets[1].data = mapData(r1.timestamps, r1.content_tps, labels);
-  charts.tps.update('none');
-
-  charts.ttft.data.labels = labels;
-  charts.ttft.data.datasets[0].data = mapData(v3.timestamps, v3.ttft_ms, labels);
-  charts.ttft.data.datasets[1].data = mapData(r1.timestamps, r1.ttft_ms, labels);
-  charts.ttft.update('none');
-
-  charts.overall.data.labels = labels;
-  charts.overall.data.datasets[0].data = mapData(v3.timestamps, v3.overall_tps, labels);
-  charts.overall.data.datasets[1].data = mapData(r1.timestamps, r1.overall_tps, labels);
-  charts.overall.update('none');
-
-  charts.reasoning.data.labels = r1Times;
-  charts.reasoning.data.datasets[0].data = r1.reasoning_tps || [];
-  charts.reasoning.update('none');
+  applyChartData(charts.tps,             labels, modelsField('content_tps'));
+  applyChartData(charts.ttft,            labels, modelsField('ttft_ms'));
+  applyChartData(charts.overall,         labels, modelsField('overall_tps'));
+  applyChartData(charts.reasoning,       labels, modelsField('reasoning_tps'));
+  applyChartData(charts.success,         labels, modelsField('success_rate'));
+  applyChartData(charts.contentTokens,   labels, modelsField('output_tokens'));
+  applyChartData(charts.reasoningTokens, labels, modelsField('reasoning_tokens'));
 }
 
 // ─── Update Stats ────────────────────────────
 
-async function updateStats() {
-  const chatStats = await fetchJSON('/api/stats?model=deepseek-chat&hours=24');
-  const r1Stats = await fetchJSON('/api/stats?model=deepseek-reasoner&hours=24');
-
-  function renderStats(el, stats, isReasoner) {
-    if (!stats || !stats.count) {
-      el.innerHTML = '<div class="stat-item" style="grid-column:1/-1"><div class="stat-label">暂无数据</div></div>';
-      return;
-    }
-    const items = [
-      { label: '测试批次', value: stats.count, unit: '次' },
-      { label: '平均首字时间', value: fmtMs(stats.avg_ttft_ms), range: `${fmtMs(stats.min_ttft_ms)} ~ ${fmtMs(stats.max_ttft_ms)}` },
-      { label: '平均内容 TPS', value: fmtTps(stats.avg_content_tps), unit: 't/s', range: `${fmtTps(stats.min_content_tps)} ~ ${fmtTps(stats.max_content_tps)}` },
-      { label: '平均整体 TPS', value: fmtTps(stats.avg_overall_tps), unit: 't/s', range: `${fmtTps(stats.min_overall_tps)} ~ ${fmtTps(stats.max_overall_tps)}` },
-    ];
-    if (isReasoner) {
-      items.push({ label: '平均思考时间', value: fmtMs(stats.avg_thinking_duration_ms), range: `${fmtMs(stats.min_thinking_duration_ms)} ~ ${fmtMs(stats.max_thinking_duration_ms)}` });
-    } else {
-      items.push({ label: '平均 Completion', value: Math.round(stats.avg_completion_tokens || 0), unit: 'tokens' });
-    }
-    el.innerHTML = items.map(it => `
-      <div class="stat-item">
-        <div class="stat-label">${it.label}</div>
-        <div class="stat-value">${it.value}${it.unit ? `<span class="metric-unit">${it.unit}</span>` : ''}</div>
-        ${it.range ? `<div class="stat-range">${it.range}</div>` : ''}
-      </div>
-    `).join('');
+function renderStats(el, stats) {
+  if (!stats || !stats.count) {
+    el.innerHTML = '<div class="stat-item" style="grid-column:1/-1"><div class="stat-label">暂无数据</div></div>';
+    return;
   }
+  const items = [
+    { label: '测试批次', value: stats.count, unit: '次' },
+    { label: '平均首字时间', value: fmtMs(stats.avg_ttft_ms), range: `${fmtMs(stats.min_ttft_ms)} ~ ${fmtMs(stats.max_ttft_ms)}` },
+    { label: '平均内容 TPS', value: fmtTps(stats.avg_content_tps), unit: 't/s', range: `${fmtTps(stats.min_content_tps)} ~ ${fmtTps(stats.max_content_tps)}` },
+    { label: '平均整体 TPS', value: fmtTps(stats.avg_overall_tps), unit: 't/s', range: `${fmtTps(stats.min_overall_tps)} ~ ${fmtTps(stats.max_overall_tps)}` },
+    { label: '平均内容 Token', value: Math.round(stats.avg_output_tokens || 0), unit: 'tokens' },
+    { label: '平均思考 Token', value: Math.round(stats.avg_reasoning_tokens || 0), unit: 'tokens' },
+    { label: '平均思考时间', value: fmtMs(stats.avg_thinking_duration_ms), range: `${fmtMs(stats.min_thinking_duration_ms)} ~ ${fmtMs(stats.max_thinking_duration_ms)}` },
+  ];
+  if (stats.total_runs) {
+    const r = fmtRate(stats.total_success || 0, stats.total_runs);
+    items.push({ label: '请求成功率', valueHtml: r.html, range: r.sub });
+  }
+  el.innerHTML = items.map(it => `
+    <div class="stat-item">
+      <div class="stat-label">${it.label}</div>
+      <div class="stat-value">${it.valueHtml ? it.valueHtml : (it.value + (it.unit ? `<span class="metric-unit">${it.unit}</span>` : ''))}</div>
+      ${it.range ? `<div class="stat-range">${it.range}</div>` : ''}
+    </div>
+  `).join('');
+}
 
-  renderStats(document.getElementById('statsChat'), chatStats, false);
-  renderStats(document.getElementById('statsR1'), r1Stats, true);
+async function updateStats() {
+  const results = await Promise.all(
+    MODELS.map(m => fetchJSON(`/api/stats?model=${m.key}&hours=24`))
+  );
+  MODELS.forEach((m, i) => {
+    renderStats(document.getElementById(`stats_${m.prefix}`), results[i]);
+  });
 }
 
 // ─── History Table ───────────────────────────
 
 let currentFilter = 'all';
+const PAGE_SIZE = 50;
+let currentPage = 1;
+let totalPages = 1;
+let totalCount = 0;
 
 async function updateHistory() {
+  const offset = (currentPage - 1) * PAGE_SIZE;
   const param = currentFilter === 'all' ? '' : `model=${currentFilter}&`;
-  const data = await fetchJSON(`/api/batches?${param}limit=50`);
+  const data = await fetchJSON(`/api/batches?${param}limit=${PAGE_SIZE}&offset=${offset}`);
   const tbody = document.getElementById('historyBody');
-  if (!data || data.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" class="no-data">暂无数据</td></tr>';
+
+  if (!data) {
+    tbody.innerHTML = '<tr><td colspan="9" class="no-data">加载失败</td></tr>';
+    totalCount = 0; totalPages = 1;
+    renderPagination();
     return;
   }
-  tbody.innerHTML = data.map(b => {
-    const isR = b.model && b.model.includes('reasoner');
-    const color = isR ? REASONER_COLOR : CHAT_COLOR;
+
+  const items = data.items || [];
+  totalCount = data.total || 0;
+  totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+
+  if (currentPage > totalPages) {
+    currentPage = totalPages;
+    return updateHistory();
+  }
+
+  if (items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="no-data">暂无数据</td></tr>';
+    renderPagination();
+    return;
+  }
+
+  tbody.innerHTML = items.map(b => {
+    const color = MODEL_COLOR[b.model] || 'var(--text-dim)';
     return `<tr>
       <td>${fmtTime(b.timestamp)}</td>
       <td><span style="color:${color}">${b.model}</span></td>
       <td>${fmtMs(b.avg_ttft_ms)}</td>
       <td>${fmtTps(b.avg_content_tps)} t/s</td>
       <td>${fmtTps(b.avg_overall_tps)} t/s</td>
-      <td>${isR ? fmtTps(b.avg_reasoning_tps) + ' t/s' : '—'}</td>
-      <td>${isR ? fmtMs(b.avg_thinking_duration_ms) : '—'}</td>
+      <td>${fmtTps(b.avg_reasoning_tps)} t/s</td>
+      <td>${fmtMs(b.avg_thinking_duration_ms)}</td>
       <td>${Math.round(b.avg_completion_tokens || 0)}</td>
       <td>${b.success_count}/${b.total_count}</td>
     </tr>`;
   }).join('');
+
+  renderPagination();
 }
 
-// 历史表格筛选
-document.querySelectorAll('.tab-btn[data-filter]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    currentFilter = btn.dataset.filter;
-    document.querySelectorAll('.tab-btn[data-filter]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    updateHistory();
-  });
+function renderPagination() {
+  const info = document.getElementById('paginationInfo');
+  const first = document.getElementById('pageFirst');
+  const prev = document.getElementById('pagePrev');
+  const next = document.getElementById('pageNext');
+  const last = document.getElementById('pageLast');
+  const jump = document.getElementById('pageJump');
+
+  if (totalCount === 0) {
+    info.textContent = '共 0 条';
+  } else {
+    const start = (currentPage - 1) * PAGE_SIZE + 1;
+    const end = Math.min(currentPage * PAGE_SIZE, totalCount);
+    info.textContent = `共 ${totalCount} 条 · 显示 ${start}-${end} · 第 ${currentPage} / ${totalPages} 页`;
+  }
+
+  first.disabled = currentPage <= 1;
+  prev.disabled = currentPage <= 1;
+  next.disabled = currentPage >= totalPages;
+  last.disabled = currentPage >= totalPages;
+
+  jump.max = totalPages;
+  if (document.activeElement !== jump) jump.value = currentPage;
+}
+
+function gotoPage(page) {
+  const p = Math.max(1, Math.min(totalPages, parseInt(page) || 1));
+  if (p === currentPage) {
+    document.getElementById('pageJump').value = currentPage;
+    return;
+  }
+  currentPage = p;
+  updateHistory();
+}
+
+// 分页按钮事件
+document.getElementById('pageFirst').addEventListener('click', () => gotoPage(1));
+document.getElementById('pagePrev').addEventListener('click', () => gotoPage(currentPage - 1));
+document.getElementById('pageNext').addEventListener('click', () => gotoPage(currentPage + 1));
+document.getElementById('pageLast').addEventListener('click', () => gotoPage(totalPages));
+document.getElementById('pageJump').addEventListener('change', (e) => gotoPage(e.target.value));
+document.getElementById('pageJump').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); gotoPage(e.target.value); e.target.blur(); }
 });
 
 // 图表时间范围切换
 document.querySelectorAll('#chartRangeBar .tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     chartHours = parseInt(btn.dataset.hours);
+    try { localStorage.setItem(CHART_HOURS_KEY, String(chartHours)); } catch (_) {}
     document.querySelectorAll('#chartRangeBar .tab-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     updateCharts();
@@ -629,6 +920,16 @@ async function refreshAll() {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  // 生成动态 DOM
+  generateCards();
+  generateStats();
+  generateHistoryFilters();
+
+  // 图表时间范围按钮高亮
+  document.querySelectorAll('#chartRangeBar .tab-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.hours) === chartHours);
+  });
+
   initCharts();
   refreshAll();
   setupAutoRefresh();
@@ -681,17 +982,16 @@ function setupAutoRefresh() {
   scheduleNext();
 }
 
-// ─── 状态快速轮询（每 2s）—— 测试时实时显示当前在跑哪个模型 ──
+// ─── 状态快速轮询（每 2s）──
 function setupFastStatusPolling() {
   setInterval(updateStatus, 2000);
 }
 
-// ─── 系统主题切换监听 —— 销毁并重建图表，让颜色跟随系统主题 ──
+// ─── 系统主题切换监听 ──
 function setupThemeListener() {
   if (!window.matchMedia) return;
   const mq = window.matchMedia('(prefers-color-scheme: light)');
   mq.addEventListener('change', () => {
-    // 销毁所有现有图表
     Object.values(charts).forEach(c => c.destroy());
     charts = {};
     initCharts();

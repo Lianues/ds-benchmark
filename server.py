@@ -7,7 +7,11 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 
-from database import get_batch_results, get_latest_batch, get_test_runs, get_all_latest, get_stats
+from database import (
+    get_batch_results, get_latest_batch, get_test_runs,
+    get_all_latest, get_stats, count_batch_results,
+)
+from ds_benchmark import ALL_MODELS
 from scheduler import scheduler_status
 
 # server.py 所在目录，用于定位 static 文件
@@ -94,10 +98,13 @@ class APIHandler(BaseHTTPRequestHandler):
         self._ok(get_all_latest())
 
     def _handle_batches(self, params):
-        """GET /api/batches?model=xxx&limit=200 → 批次历史"""
+        """GET /api/batches?model=xxx&limit=50&offset=0 → 批次历史 (含总数)"""
         model = params.get("model", [None])[0]
-        limit = int(params.get("limit", [200])[0])
-        self._ok(get_batch_results(model=model, limit=limit))
+        limit = int(params.get("limit", [50])[0])
+        offset = max(0, int(params.get("offset", [0])[0]))
+        items = get_batch_results(model=model, limit=limit, offset=offset)
+        total = count_batch_results(model=model)
+        self._ok({"items": items, "total": total, "limit": limit, "offset": offset})
 
     def _handle_runs(self, params):
         """GET /api/runs?batch_id=xxx → 某批次测试详情"""
@@ -117,7 +124,7 @@ class APIHandler(BaseHTTPRequestHandler):
         """GET /api/chart-data?hours=24 → 图表时序数据"""
         hours = int(params.get("hours", [24])[0])
 
-        models = ["deepseek-chat", "deepseek-reasoner"]
+        models = ALL_MODELS
         chart = {}
 
         for model in models:
@@ -139,10 +146,15 @@ class APIHandler(BaseHTTPRequestHandler):
                 "total_time_ms": [],
                 "content_streaming_ms": [],
                 "completion_tokens": [],
+                "output_tokens": [],
+                "success_rate": [],
+                "success_count": [],
+                "total_count": [],
             }
-            if model == "deepseek-reasoner":
-                series["thinking_duration_ms"] = []
-                series["reasoning_tps"] = []
+            # 所有模型都启用思考模式，统一包含思维链字段
+            series["thinking_duration_ms"] = []
+            series["reasoning_tps"] = []
+            series["reasoning_tokens"] = []
 
             for b in (batches or []):
                 # 解析时间戳
@@ -169,10 +181,22 @@ class APIHandler(BaseHTTPRequestHandler):
                 series["total_time_ms"].append(b.get("total_time_ms") or b.get("avg_total_time_ms"))
                 series["content_streaming_ms"].append(b.get("content_streaming_ms") or b.get("avg_content_streaming_ms"))
                 series["completion_tokens"].append(b.get("completion_tokens") or b.get("avg_completion_tokens"))
+                series["output_tokens"].append(b.get("output_tokens") or b.get("avg_output_tokens"))
 
-                if model == "deepseek-reasoner":
-                    series["thinking_duration_ms"].append(b.get("thinking_duration_ms") or b.get("avg_thinking_duration_ms"))
-                    series["reasoning_tps"].append(b.get("reasoning_tps") or b.get("avg_reasoning_tps"))
+                # 成功率（百分比）
+                sc = b.get("success_count")
+                tc = b.get("total_count")
+                if sc is not None and tc:
+                    rate = round(sc / tc * 100, 2)
+                else:
+                    rate = None
+                series["success_rate"].append(rate)
+                series["success_count"].append(sc)
+                series["total_count"].append(tc)
+
+                series["thinking_duration_ms"].append(b.get("thinking_duration_ms") or b.get("avg_thinking_duration_ms"))
+                series["reasoning_tps"].append(b.get("reasoning_tps") or b.get("avg_reasoning_tps"))
+                series["reasoning_tokens"].append(b.get("reasoning_tokens") or b.get("avg_reasoning_tokens"))
 
             chart[model] = series
 

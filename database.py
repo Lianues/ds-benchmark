@@ -345,6 +345,33 @@ def get_latest_batch(model: str) -> dict | None:
             conn.close()
 
 
+def count_batch_results(model: str | None = None) -> int:
+    """
+    统计 batch_results 表的总条数，支持按模型筛选。
+
+    Args:
+        model: 模型名称（None 则统计全部）
+
+    Returns:
+        记录总数
+    """
+    with _lock:
+        conn = _get_conn()
+        try:
+            if model:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM batch_results WHERE model = ?",
+                    (model,)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM batch_results"
+                ).fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            conn.close()
+
+
 def get_test_runs(batch_id: str) -> list[dict]:
     """
     获取批次下的所有单次测试结果。
@@ -410,18 +437,28 @@ def get_stats(model: str, hours: int = 24) -> dict | None:
             row = conn.execute("""
                 SELECT
                     COUNT(*) AS batch_count,
+                    COUNT(*) AS count,
                     AVG(avg_content_tps) AS avg_content_tps,
                     MIN(min_content_tps) AS min_content_tps,
                     MAX(max_content_tps) AS max_content_tps,
                     AVG(avg_reasoning_tps) AS avg_reasoning_tps,
+                    MIN(avg_reasoning_tps) AS min_reasoning_tps,
+                    MAX(avg_reasoning_tps) AS max_reasoning_tps,
                     AVG(avg_overall_tps) AS avg_overall_tps,
+                    MIN(avg_overall_tps) AS min_overall_tps,
+                    MAX(avg_overall_tps) AS max_overall_tps,
                     AVG(avg_ttft_ms) AS avg_ttft_ms,
                     MIN(min_ttft_ms) AS min_ttft_ms,
                     MAX(max_ttft_ms) AS max_ttft_ms,
                     AVG(avg_content_ttft_ms) AS avg_content_ttft_ms,
                     AVG(avg_thinking_duration_ms) AS avg_thinking_duration_ms,
+                    MIN(avg_thinking_duration_ms) AS min_thinking_duration_ms,
+                    MAX(avg_thinking_duration_ms) AS max_thinking_duration_ms,
                     AVG(avg_total_time_ms) AS avg_total_time_ms,
                     AVG(avg_chunk_speed) AS avg_chunk_speed,
+                    AVG(avg_completion_tokens) AS avg_completion_tokens,
+                    AVG(avg_output_tokens) AS avg_output_tokens,
+                    AVG(avg_reasoning_tokens) AS avg_reasoning_tokens,
                     SUM(success_count) AS total_success,
                     SUM(total_count) AS total_runs
                 FROM batch_results

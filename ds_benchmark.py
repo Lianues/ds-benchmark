@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-DeepSeek API 流式性能基准测试工具
-===================================
-支持模型：
-  - deepseek-chat      (V3)  : 普通对话模型，max_tokens=8192
-  - deepseek-reasoner  (R1)  : 推理模型，max_tokens=65536
+DeepSeek / GLM API 流式性能基准测试工具
+=============================================
+支持模型（思考模式）：
+  - deepseek-v4-pro   : V4 Pro 模型，max_tokens=393216 (384K)，effort=max
+  - deepseek-v4-flash : V4 Flash 模型，max_tokens=393216 (384K)，effort=max
+  - glm-5.1           : 智谱 GLM-5.1 模型，max_tokens=65536 (64K)
+  - kimi-k2.6         : Kimi K2.6 模型，max_tokens=65536 (64K)，默认开启思考
 
 测量指标：
   - TTFT (Time To First Token)  : 首字时间 — 从请求发出到收到第一个内容 chunk 的耗时
@@ -25,23 +27,111 @@ import httpx
 
 # ─── 配置 ───────────────────────────────────────────────────────────────────────
 
-API_URL = "https://api.deepseek.com/chat/completions"
-
-# 各模型默认 max_tokens
-MODEL_MAX_TOKENS = {
-    "deepseek-chat":     8192,    # V3: 8K
-    "deepseek-reasoner": 65536,   # R1: 64K
+# 各模型配置（API 地址、max_tokens、API Key 环境变量名、provider 类型）
+MODEL_CONFIG = {
+    "deepseek-v4-pro": {
+        "api_url": "https://api.deepseek.com/chat/completions",
+        "max_tokens": 393216,  # V4 Pro: 384K
+        "api_key_env": "DS_API_KEY",
+        "provider": "deepseek",
+    },
+    "deepseek-v4-flash": {
+        "api_url": "https://api.deepseek.com/chat/completions",
+        "max_tokens": 393216,  # V4 Flash: 384K
+        "api_key_env": "DS_API_KEY",
+        "provider": "deepseek",
+    },
+    "glm-5.1": {
+        "api_url": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        "max_tokens": 65536,   # GLM-5.1: 64K
+        "api_key_env": "GLM_API_KEY",
+        "provider": "glm",
+        "parallel": 1,         # GLM 限制 1 并发
+    },
+    "kimi-k2.6": {
+        "api_url": "https://api.moonshot.cn/v1/chat/completions",
+        "max_tokens": 65536,   # Kimi K2.6: 64K
+        "api_key_env": "KIMI_API_KEY",
+        "provider": "kimi",
+    },
 }
 
-ALL_MODELS = list(MODEL_MAX_TOKENS.keys())
+ALL_MODELS = list(MODEL_CONFIG.keys())
+
+
+def get_model_config(model: str) -> dict:
+    """根据模型名获取完整配置"""
+    if model in MODEL_CONFIG:
+        return MODEL_CONFIG[model]
+    for key, conf in MODEL_CONFIG.items():
+        if key in model:
+            return conf
+    return MODEL_CONFIG["deepseek-v4-pro"]
 
 
 def get_default_max_tokens(model: str) -> int:
     """根据模型名获取默认 max_tokens"""
-    for key, val in MODEL_MAX_TOKENS.items():
-        if key in model:
-            return val
-    return 8192
+    return get_model_config(model)["max_tokens"]
+
+
+def get_api_url(model: str) -> str:
+    """根据模型名获取 API 地址"""
+    return get_model_config(model)["api_url"]
+
+
+def get_provider(model: str) -> str:
+    """根据模型名获取 provider 类型"""
+    return get_model_config(model)["provider"]
+
+
+def get_parallel(model: str, default: int = 3) -> int:
+    """获取模型的并发数限制（未配置则使用默认值）"""
+    return get_model_config(model).get("parallel", default)
+
+
+# ─── API Key 管理 ────────────────────────────────────────────────────────────────
+
+_api_keys: dict = {}
+
+
+def _load_env_file() -> dict:
+    """解析 .env 文件，返回所有键值对"""
+    env_vals = {}
+    env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_file):
+        with open(env_file, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env_vals[k.strip()] = v.strip().strip('"').strip("'")
+    return env_vals
+
+
+def load_api_keys() -> dict:
+    """从环境变量和 .env 文件加载所有 API Key"""
+    global _api_keys
+    env_vals = _load_env_file()
+    env_var_names = set(conf["api_key_env"] for conf in MODEL_CONFIG.values())
+    for var_name in env_var_names:
+        val = os.environ.get(var_name, "") or env_vals.get(var_name, "")
+        if val:
+            _api_keys[var_name] = val
+    return _api_keys
+
+
+def get_api_key(model: str) -> str:
+    """获取指定模型的 API Key"""
+    if not _api_keys:
+        load_api_keys()
+    env_var = get_model_config(model)["api_key_env"]
+    return _api_keys.get(env_var, "")
+
+
+def set_api_key(env_var: str, key: str):
+    """手动设置 API Key"""
+    global _api_keys
+    _api_keys[env_var] = key
 
 
 # ─── 数据类 ─────────────────────────────────────────────────────────────────────
@@ -188,10 +278,12 @@ class StreamMetrics:
 
 def build_request_body(
     prompt: str,
-    model: str = "deepseek-chat",
-    max_tokens: int = 8192,
+    model: str = "deepseek-v4-pro",
+    max_tokens: int = 393216,
 ) -> dict:
-    """构建请求体，根据模型自动调整参数"""
+    """构建请求体 — 根据 provider 适配参数"""
+    provider = get_provider(model)
+
     body = {
         "messages": [{"role": "user", "content": prompt}],
         "model": model,
@@ -200,12 +292,13 @@ def build_request_body(
         "stream_options": {"include_usage": True},
     }
 
-    # deepseek-chat (V3) 特有参数
-    if "reasoner" not in model:
-        body.update({
-            "thinking": {"type": "disabled"},
-            "response_format": {"type": "text"},
-        })
+    if provider == "deepseek":
+        body["thinking"] = {"type": "enabled"}
+        body["reasoning_effort"] = "max"
+    elif provider == "glm":
+        body["thinking"] = {"type": "enabled"}
+        # GLM: 不需要 temperature 和 reasoning_effort
+    # Kimi: 默认开启思考，不需要传 thinking / temperature / reasoning_effort
 
     return body
 
@@ -224,9 +317,9 @@ def parse_sse_line(line: str) -> Optional[dict]:
 
 
 def stream_chat(
-    api_key: str,
-    prompt: str,
-    model: str = "deepseek-chat",
+    api_key: str = None,
+    prompt: str = "",
+    model: str = "deepseek-v4-pro",
     max_tokens: int = None,
     timeout: float = 600.0,
     verbose: bool = True,
@@ -236,6 +329,14 @@ def stream_chat(
     # 自动设置 max_tokens
     if max_tokens is None:
         max_tokens = get_default_max_tokens(model)
+
+    # 自动查找 API Key
+    if not api_key:
+        api_key = get_api_key(model)
+    if not api_key:
+        raise ValueError(f"未配置模型 {model} 的 API Key")
+
+    api_url = get_api_url(model)
 
     metrics = StreamMetrics(model=model)
     body = build_request_body(prompt, model, max_tokens)
@@ -259,12 +360,15 @@ def stream_chat(
     metrics.request_start = time.perf_counter()
 
     with httpx.Client(timeout=httpx.Timeout(timeout)) as client:
-        with client.stream("POST", API_URL, headers=headers, json=body) as response:
+        with client.stream("POST", api_url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 body_text = response.read().decode()
                 print(f"\n❌ 请求失败 HTTP {response.status_code}: {body_text}")
                 metrics.request_end = time.perf_counter()
-                return metrics
+                # 抛出异常，让上层 run_single_test 捕获并把这次记为失败
+                raise RuntimeError(
+                    f"HTTP {response.status_code}: {body_text[:500]}"
+                )
 
             if verbose:
                 print()
@@ -289,7 +393,7 @@ def stream_chat(
                     # cache 信息
                     metrics.prompt_cache_hit_tokens = usage.get("prompt_cache_hit_tokens", 0)
                     metrics.prompt_cache_miss_tokens = usage.get("prompt_cache_miss_tokens", 0)
-                    # deepseek-reasoner: completion_tokens_details
+                    # 思考模式: completion_tokens_details
                     details = usage.get("completion_tokens_details", {})
                     if details:
                         metrics.reasoning_tokens = details.get("reasoning_tokens", 0)
@@ -361,16 +465,42 @@ def fmt_ms(seconds: float) -> str:
         return f"{int(m)}m {s:.1f}s"
 
 
+def _get_model_short_name(model: str) -> str:
+    """获取模型的简短显示名称"""
+    if "v4-pro" in model:
+        return "V4 Pro"
+    elif "v4-flash" in model:
+        return "V4 Flash"
+    elif "glm" in model:
+        return "GLM-5.1"
+    elif "kimi" in model:
+        return "Kimi K2.6"
+    else:
+        return model
+
+
+def _get_provider_name(model: str) -> str:
+    """获取模型的 provider 显示名称"""
+    provider = get_provider(model)
+    if provider == "glm":
+        return "智谱"
+    elif provider == "kimi":
+        return "Kimi"
+    return "DeepSeek"
+
+
 def print_report(metrics: StreamMetrics):
     """打印格式化的性能报告"""
     has_reasoning = metrics.has_reasoning
-    model_tag = "R1 推理" if has_reasoning else "V3 对话"
+    short = _get_model_short_name(metrics.model)
+    provider_name = _get_provider_name(metrics.model)
+    model_tag = f"{short} 思考模式"
 
     W = 60  # 表宽
 
     print()
     print("╔" + "═" * W + "╗")
-    title = f"DeepSeek {model_tag} 模型 · 流式性能报告"
+    title = f"{provider_name} {model_tag} 模型 · 流式性能报告"
     print("║" + title.center(W - 8) + "        ║")
     print("║" + f"Model: {metrics.model}".center(W - 8) + "        ║")
     print("╚" + "═" * W + "╝")
@@ -451,7 +581,7 @@ def print_comparison(results: dict[str, StreamMetrics]):
     models = list(results.keys())
     header = f"  {'指标':<28}"
     for m in models:
-        short = "V3 Chat" if "chat" in m else "R1 Reasoner"
+        short = _get_model_short_name(m)
         header += f" │ {short:>16}"
     print(header)
     print("  " + "─" * (28 + len(models) * 19))
@@ -581,46 +711,39 @@ def run_multi_round(
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────────
 
-DEFAULT_PROMPT = """请以"时光的河流"为题，写一篇不少于3000字的散文。
-
-要求：
-1. 文章需要有深度的思考和细腻的情感表达
-2. 结构完整，分为多个章节，每个章节有小标题
-3. 融入对历史、人生、自然的思考
-4. 运用丰富的修辞手法：比喻、拟人、排比、对比等
-5. 结尾要有升华，给人以启迪
-6. 请用优美的中文写作"""
+DEFAULT_PROMPT = """请以"时光的河流"为题，写一篇800字左右的短文。要求语言优美、结构完整。"""
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="DeepSeek API 流式性能基准测试工具",
+        description="DeepSeek / GLM API 流式性能基准测试工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
   # 单模型测试
-  python ds_benchmark.py -k sk-xxx -m deepseek-chat "写一篇散文"
-  python ds_benchmark.py -k sk-xxx -m deepseek-reasoner "写一篇散文"
+  python ds_benchmark.py -k sk-xxx -m deepseek-v4-pro "写一篇散文"
+  python ds_benchmark.py -k sk-xxx -m deepseek-v4-flash "写一篇散文"
+  python ds_benchmark.py -m glm-5.1 "写一篇散文"          # 自动从 .env 读取 GLM_API_KEY
 
-  # 对比测试 (同时测 V3 + R1)
-  python ds_benchmark.py -k sk-xxx -c "写一篇散文"
+  # 对比测试 (同时测所有已配置 Key 的模型)
+  python ds_benchmark.py -c "写一篇散文"
 
   # 多轮测试
-  python ds_benchmark.py -k sk-xxx -m deepseek-chat -n 3 "Hello"
+  python ds_benchmark.py -k sk-xxx -m deepseek-v4-pro -n 3 "Hello"
         """,
     )
     parser.add_argument("prompt", nargs="?", default=DEFAULT_PROMPT,
-                        help="用户 prompt (默认: 写一篇3000字散文)")
+                        help="用户 prompt (默认: 写一篇800字散文)")
     parser.add_argument("-k", "--api-key", default=None,
-                        help="DeepSeek API Key")
+                        help="API Key (直接指定，适用于当前测试的模型)")
     parser.add_argument("-m", "--model", default=None,
-                        help="模型名称: deepseek-chat (V3) 或 deepseek-reasoner (R1)")
+                        help="模型名称: deepseek-v4-pro, deepseek-v4-flash 或 glm-5.1")
     parser.add_argument("-c", "--compare", action="store_true",
-                        help="对比模式：依次测试 deepseek-chat 和 deepseek-reasoner")
+                        help="对比模式：依次测试所有已配置 Key 的模型")
     parser.add_argument("-n", "--rounds", type=int, default=1,
                         help="每个模型的测试轮数 (默认: 1)")
     parser.add_argument("--max-tokens", type=int, default=None,
-                        help="最大生成 token 数 (默认: chat=8192, reasoner=65536)")
+                        help="最大生成 token 数 (默认: 按模型自动设置)")
     parser.add_argument("--timeout", type=float, default=600.0,
                         help="请求超时秒数 (默认: 600)")
     parser.add_argument("-q", "--quiet", action="store_true",
@@ -628,23 +751,21 @@ def main():
 
     args = parser.parse_args()
 
-    # API Key
-    api_key = args.api_key or os.environ.get("DS_API_KEY", "")
-    if not api_key:
-        env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-        if os.path.exists(env_file):
-            with open(env_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("DS_API_KEY="):
-                        api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
-                        break
+    # ── API Key ──
+    # 加载 .env 和环境变量中的所有 Key
+    load_api_keys()
 
+    # 如果 CLI 指定了 -k，将其作为当前模型的 Key 使用
+    api_key = args.api_key
     if not api_key:
+        model_name = args.model or "deepseek-v4-pro"
+        api_key = get_api_key(model_name)
+
+    if not api_key and not args.compare:
         print("❌ 请提供 API Key:")
-        print("   方式 1: python ds_benchmark.py -k sk-xxx 'your prompt'")
-        print("   方式 2: 设置环境变量 DS_API_KEY=sk-xxx")
-        print("   方式 3: 创建 .env 文件并写入 DS_API_KEY=sk-xxx")
+        print("   方式 1: python ds_benchmark.py -k your-key 'your prompt'")
+        print("   方式 2: 设置环境变量 DS_API_KEY 或 GLM_API_KEY")
+        print("   方式 3: 在 .env 文件中配置对应 Key")
         sys.exit(1)
 
     verbose = not args.quiet
@@ -654,6 +775,11 @@ def main():
         comparison_results: dict[str, StreamMetrics] = {}
 
         for model in ALL_MODELS:
+            model_key = args.api_key or get_api_key(model)
+            if not model_key:
+                print(f"\n  ⚠ {model} 未配置 API Key，跳过")
+                continue
+
             max_tok = args.max_tokens if args.max_tokens else get_default_max_tokens(model)
 
             print(f"\n{'━' * 60}")
@@ -662,7 +788,7 @@ def main():
 
             if args.rounds > 1:
                 results = run_multi_round(
-                    api_key=api_key, prompt=args.prompt, rounds=args.rounds,
+                    api_key=model_key, prompt=args.prompt, rounds=args.rounds,
                     model=model, max_tokens=max_tok,
                     timeout=args.timeout, verbose=verbose,
                 )
@@ -670,7 +796,7 @@ def main():
                 comparison_results[model] = results[-1]
             else:
                 m = stream_chat(
-                    api_key=api_key, prompt=args.prompt,
+                    api_key=model_key, prompt=args.prompt,
                     model=model, max_tokens=max_tok,
                     timeout=args.timeout, verbose=verbose,
                 )
@@ -678,11 +804,14 @@ def main():
                 comparison_results[model] = m
 
         # 打印对比表
-        print_comparison(comparison_results)
+        if comparison_results:
+            print_comparison(comparison_results)
+        else:
+            print("\n❌ 没有可用的模型（未配置任何 API Key）")
         return
 
     # ── 单模型模式 ──
-    model = args.model or "deepseek-chat"
+    model = args.model or "deepseek-v4-pro"
     max_tok = args.max_tokens if args.max_tokens else get_default_max_tokens(model)
 
     kwargs = dict(

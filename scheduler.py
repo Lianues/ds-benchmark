@@ -1,7 +1,7 @@
 """
-定时调度模块 —— 每隔 N 分钟并行调用 DeepSeek API 进行性能测试。
+定时调度模块 —— 每隔 N 分钟并行调用 API 进行性能测试。
 
-每个周期对 deepseek-chat / deepseek-reasoner 分别并行发起多次请求，
+每个周期对所有已配置 API Key 的模型分别并行发起多次请求，
 计算平均值后存入数据库，供 Web 前端查询。
 """
 
@@ -15,6 +15,8 @@ from ds_benchmark import (
     stream_chat,
     StreamMetrics,
     get_default_max_tokens,
+    get_api_key,
+    get_parallel,
     ALL_MODELS,
     DEFAULT_PROMPT,
 )
@@ -157,30 +159,45 @@ def run_batch(
 # ---------------------------------------------------------------------------
 # 3. run_cycle
 # ---------------------------------------------------------------------------
-def run_cycle(api_key: str, prompt: str, parallel: int = 3) -> list:
-    """对所有模型并行执行一轮批次测试。
+def run_cycle(prompt: str, parallel: int = 3) -> list:
+    """对所有已配置 API Key 的模型并行执行一轮批次测试。
 
-    所有模型同时开跑，每个模型内部再并行 parallel 次，
-    总并发数 = len(ALL_MODELS) * parallel。
+    每个模型使用各自的 API Key 和并发数，内部再并行 N 次。
 
     Returns:
         [(batch_id, runs_list), ...]
     """
     global scheduler_status
+
+    # 筛选出有 API Key 的模型
+    active_models = []
+    for model in ALL_MODELS:
+        key = get_api_key(model)
+        if key:
+            active_models.append((model, key))
+        else:
+            print(f"  ⚠ {model} 未配置 API Key，跳过")
+
+    if not active_models:
+        print("  ❌ 没有可用的模型（未配置任何 API Key）")
+        return []
+
     cycle_start = datetime.now()
-    total_concurrent = len(ALL_MODELS) * parallel
+    model_names = [m for m, _ in active_models]
+    total_concurrent = sum(get_parallel(m, parallel) for m, _ in active_models)
     print(f"\n{'='*60}")
     print(f"  🚀 新一轮测试  {cycle_start.strftime('%Y-%m-%d %H:%M:%S')}"
           f"  (共 {total_concurrent} 并发)")
     print(f"{'='*60}")
 
-    scheduler_status["current_model"] = " + ".join(ALL_MODELS)
+    scheduler_status["current_model"] = " + ".join(model_names)
 
     # 所有模型并行跑
-    with ThreadPoolExecutor(max_workers=len(ALL_MODELS)) as executor:
+    with ThreadPoolExecutor(max_workers=len(active_models)) as executor:
         futures = {
-            executor.submit(run_batch, api_key, model, prompt, parallel): model
-            for model in ALL_MODELS
+            executor.submit(run_batch, api_key, model, prompt,
+                            get_parallel(model, parallel)): model
+            for model, api_key in active_models
         }
         results = []
         for future in as_completed(futures):
@@ -190,7 +207,7 @@ def run_cycle(api_key: str, prompt: str, parallel: int = 3) -> list:
     elapsed = (datetime.now() - cycle_start).total_seconds()
     print(f"{'─'*60}")
     print(f"  ✅ 本轮完成  耗时 {elapsed:.1f}s"
-          f"  模型数 {len(ALL_MODELS)}  并发 {total_concurrent}")
+          f"  模型数 {len(active_models)}  并发 {total_concurrent}")
     print(f"{'='*60}\n")
 
     return results
@@ -200,7 +217,7 @@ def run_cycle(api_key: str, prompt: str, parallel: int = 3) -> list:
 # 4. start_scheduler
 # ---------------------------------------------------------------------------
 def start_scheduler(
-    api_key: str,
+    api_key: str = None,
     prompt: str = None,
     interval_minutes: int = 10,
     run_immediately: bool = True,
@@ -209,7 +226,7 @@ def start_scheduler(
     """启动后台定时调度器。
 
     Args:
-        api_key: DeepSeek API Key
+        api_key: DeepSeek API Key（可选，向后兼容；优先使用 .env 中的配置）
         prompt: 测试 prompt（默认 DEFAULT_PROMPT）
         interval_minutes: 调度间隔（分钟）
         run_immediately: 是否立即执行第一轮
@@ -220,6 +237,12 @@ def start_scheduler(
     """
     if prompt is None:
         prompt = DEFAULT_PROMPT
+
+    # 如果传入了 api_key，作为 DS_API_KEY 的备选
+    if api_key:
+        from ds_benchmark import set_api_key, _api_keys
+        if "DS_API_KEY" not in _api_keys:
+            set_api_key("DS_API_KEY", api_key)
 
     global scheduler_status
     stop_event = threading.Event()
@@ -238,7 +261,7 @@ def start_scheduler(
                     "%Y-%m-%d %H:%M:%S"
                 )
                 scheduler_status["total_cycles"] += 1
-                run_cycle(api_key, prompt, parallel=parallel)
+                run_cycle(prompt, parallel=parallel)
 
             # --- 定时循环 ---
             while not stop_event.is_set():
@@ -260,7 +283,7 @@ def start_scheduler(
                 )
                 scheduler_status["next_run_time"] = None
                 scheduler_status["total_cycles"] += 1
-                run_cycle(api_key, prompt, parallel=parallel)
+                run_cycle(prompt, parallel=parallel)
 
         except Exception:
             traceback.print_exc()
