@@ -7,6 +7,7 @@
 
 import threading
 import time
+import os
 import traceback
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,6 +18,8 @@ from ds_benchmark import (
     get_default_max_tokens,
     get_api_key,
     get_parallel,
+    load_api_keys,
+    _load_env_file,
     ALL_MODELS,
     DEFAULT_PROMPT,
 )
@@ -159,6 +162,19 @@ def run_batch(
 # ---------------------------------------------------------------------------
 # 3. run_cycle
 # ---------------------------------------------------------------------------
+
+def _read_interval() -> int | None:
+    """从环境变量 / .env 读取最新的 INTERVAL_MINUTES（支持热更新）"""
+    env_val = os.environ.get("INTERVAL_MINUTES") or _load_env_file().get("INTERVAL_MINUTES")
+    if not env_val:
+        return None
+    try:
+        v = int(env_val)
+        return v if v >= 1 else None
+    except (ValueError, TypeError):
+        return None
+
+
 def run_cycle(prompt: str, parallel: int = 3) -> list:
     """对所有已配置 API Key 的模型并行执行一轮批次测试。
 
@@ -168,6 +184,9 @@ def run_cycle(prompt: str, parallel: int = 3) -> list:
         [(batch_id, runs_list), ...]
     """
     global scheduler_status
+
+    # 热加载 .env（支持运行时修改 Key / 添加新模型 Key）
+    load_api_keys()
 
     # 筛选出有 API Key 的模型
     active_models = []
@@ -265,17 +284,20 @@ def start_scheduler(
 
             # --- 定时循环 ---
             while not stop_event.is_set():
-                next_time = datetime.now() + timedelta(minutes=interval_minutes)
+                # 热读取间隔（.env 可能已修改）
+                current_interval = _read_interval() or interval_minutes
+
+                next_time = datetime.now() + timedelta(minutes=current_interval)
                 scheduler_status["next_run_time"] = next_time.strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
                 print(
                     f"  ⏳ 下次执行: {scheduler_status['next_run_time']}  "
-                    f"(间隔 {interval_minutes} 分钟)"
+                    f"(间隔 {current_interval} 分钟)"
                 )
 
                 # 可中断地等待
-                if stop_event.wait(timeout=interval_minutes * 60):
+                if stop_event.wait(timeout=current_interval * 60):
                     break  # 收到停止信号
 
                 scheduler_status["last_run_time"] = datetime.now().strftime(

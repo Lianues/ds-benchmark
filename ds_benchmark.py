@@ -92,6 +92,7 @@ def get_parallel(model: str, default: int = 3) -> int:
 # ─── API Key 管理 ────────────────────────────────────────────────────────────────
 
 _api_keys: dict = {}
+_cli_overrides: dict = {}  # CLI 手动设置的 Key，热更新时不会被覆盖
 
 
 def _load_env_file() -> dict:
@@ -109,11 +110,14 @@ def _load_env_file() -> dict:
 
 
 def load_api_keys() -> dict:
-    """从环境变量和 .env 文件加载所有 API Key"""
+    """从环境变量和 .env 文件加载所有 API Key（支持热更新，CLI 设置的 Key 不会被覆盖）"""
     global _api_keys
+    _api_keys = dict(_cli_overrides)  # 保留 CLI 覆盖，清除旧缓存
     env_vals = _load_env_file()
     env_var_names = set(conf["api_key_env"] for conf in MODEL_CONFIG.values())
     for var_name in env_var_names:
+        if var_name in _cli_overrides:
+            continue  # CLI 优先，不被 .env 覆盖
         val = os.environ.get(var_name, "") or env_vals.get(var_name, "")
         if val:
             _api_keys[var_name] = val
@@ -129,9 +133,10 @@ def get_api_key(model: str) -> str:
 
 
 def set_api_key(env_var: str, key: str):
-    """手动设置 API Key"""
-    global _api_keys
+    """手动设置 API Key（CLI 优先，不会被热更新覆盖）"""
+    global _api_keys, _cli_overrides
     _api_keys[env_var] = key
+    _cli_overrides[env_var] = key
 
 
 # ─── 数据类 ─────────────────────────────────────────────────────────────────────
@@ -445,6 +450,14 @@ def stream_chat(
     metrics.request_end = time.perf_counter()
     metrics.full_reasoning = "".join(reasoning_parts)
     metrics.full_content = "".join(content_parts)
+
+    # 对于不返回 reasoning_tokens 的模型（如 Kimi），
+    # completion_tokens 包含所有 token，应使用完整流式时长来计算 content_tps
+    if metrics.reasoning_tokens == 0 and metrics.first_reasoning_time > 0:
+        if metrics.first_content_time == 0 or metrics.first_reasoning_time < metrics.first_content_time:
+            metrics.first_content_time = metrics.first_reasoning_time
+        if metrics.last_reasoning_time > metrics.last_chunk_time:
+            metrics.last_chunk_time = metrics.last_reasoning_time
 
     if verbose:
         print("\n")
